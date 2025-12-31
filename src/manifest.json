@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Better Auto PiP",
   "version": "0.1.0",
-  "description": "Automatically enable Picture-in-Picture for videos when switching tabs or collapsing panels (Vivialdi only). Works with YouTube, Netflix, Plex, Twitch, and more.",
+  "description": "Automatically enable Picture-in-Picture for videos when switching tabs or collapsing panels (Vivialdi only).",
   "author": "SeanHarsh",
   "homepage_url": "https://github.com/seanharsh/Better-Auto-PiP",
   "icons": {

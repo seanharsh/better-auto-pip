@@ -1,0 +1,107 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v0.1.0, v1.2.3, etc.
+
+permissions:
+  contents: write  # Required to create releases
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: tag_version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Verify version matches manifest.json
+        run: |
+          MANIFEST_VERSION=$(jq -r '.version' src/manifest.json)
+          TAG_VERSION="${{ steps.tag_version.outputs.version }}"
+
+          if [ "$MANIFEST_VERSION" != "$TAG_VERSION" ]; then
+            echo "❌ Version mismatch!"
+            echo "   manifest.json: $MANIFEST_VERSION"
+            echo "   Git tag:       $TAG_VERSION"
+            exit 1
+          fi
+
+          echo "✅ Version matches: $MANIFEST_VERSION"
+
+      - name: Build extension package
+        run: |
+          cd src
+          zip -r ../better-auto-pip-${{ steps.tag_version.outputs.tag }}.zip . \
+            -x "*.git*" \
+            -x "*.DS_Store" \
+            -x "node_modules/*" \
+            -x "*.md"
+          cd ..
+          echo "✅ Created better-auto-pip-${{ steps.tag_version.outputs.tag }}.zip"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Extract changelog for this version from CHANGELOG.md if it exists
+          if [ -f CHANGELOG.md ]; then
+            # Try to extract version-specific changelog
+            CHANGES=$(awk "/^## \[${{ steps.tag_version.outputs.tag }}\]/{flag=1;next}/^## /{flag=0}flag" CHANGELOG.md || echo "")
+            if [ -n "$CHANGES" ]; then
+              echo "changes<<EOF" >> $GITHUB_OUTPUT
+              echo "$CHANGES" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+            else
+              echo "changes=See [CHANGELOG.md](CHANGELOG.md) for details." >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "changes=Release ${{ steps.tag_version.outputs.tag }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: better-auto-pip-${{ steps.tag_version.outputs.tag }}.zip
+          body: |
+            ## Better Auto PiP ${{ steps.tag_version.outputs.tag }}
+
+            ${{ steps.changelog.outputs.changes }}
+
+            ### Installation
+
+            **Option 1: Chrome Web Store** (Coming Soon)
+
+            **Option 2: Manual Installation (Developer Mode)**
+            1. Download `better-auto-pip-${{ steps.tag_version.outputs.tag }}.zip`
+            2. Extract the ZIP file
+            3. Open Chrome/Edge and navigate to `chrome://extensions/`
+            4. Enable "Developer mode" (top right)
+            5. Click "Load unpacked" and select the extracted folder
+
+            ### What's New
+            See the changelog above for details.
+
+            ---
+
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.tag_version.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true  # Auto-generates notes from commits
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release created successfully
+        run: |
+          echo "✅ Release ${{ steps.tag_version.outputs.tag }} created successfully!"
+          echo "📦 Artifact: better-auto-pip-${{ steps.tag_version.outputs.tag }}.zip"
+          echo "🔗 View at: https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag_version.outputs.tag }}"
