@@ -18,32 +18,46 @@ let LAST_TAB = null;
 const TIMERS = {};
 const INJECTED = new Set();
 
-const DEBUG = false;
-const log = () => { };
+const DEBUG = true;
+const log = (...args) => {
+  if (DEBUG) console.debug("[BetterAutoPiP Background]", ...args);
+};
 
-chrome.storage.sync.get(DEFAULTS, (c) => CFG = { ...DEFAULTS, ...c });
+chrome.storage.sync.get(DEFAULTS, (c) => {
+  CFG = { ...DEFAULTS, ...c };
+  log("Config loaded:", CFG);
+});
 chrome.storage.onChanged.addListener((changes) => {
   for (const k in changes) {
-    if (DEFAULTS.hasOwnProperty(k)) CFG[k] = changes[k].newValue;
+    if (DEFAULTS.hasOwnProperty(k)) {
+      CFG[k] = changes[k].newValue;
+      log(`Config changed: ${k} =`, changes[k].newValue);
+    }
   }
 });
 
 (async function initDetectVivaldi() {
   if (typeof chrome.vivaldi !== 'undefined') {
     IS_VIVALDI = true;
+    log("Vivaldi detected via chrome.vivaldi API");
     return;
   }
   if (chrome.runtime?.getBrowserInfo) {
     const info = await chrome.runtime.getBrowserInfo().catch(() => null);
     if (info?.name?.toLowerCase().includes('vivaldi')) {
       IS_VIVALDI = true;
+      log("Vivaldi detected via getBrowserInfo");
       return;
     }
   }
   try {
     const wins = await chrome.windows.getAll({ windowTypes: ['normal'] });
-    if (wins.length > 0 && 'vivExtData' in wins[0]) IS_VIVALDI = true;
+    if (wins.length > 0 && 'vivExtData' in wins[0]) {
+      IS_VIVALDI = true;
+      log("Vivaldi detected via vivExtData");
+    }
   } catch { }
+  log(`Vivaldi detection complete: IS_VIVALDI=${IS_VIVALDI}`);
 })();
 
 const getHost = (url) => {
@@ -57,27 +71,39 @@ const isSiteEnabled = (url) => {
 };
 
 async function ensureScript(tabId) {
-  if (INJECTED.has(tabId)) return true;
+  if (INJECTED.has(tabId)) {
+    log(`Tab ${tabId}: content script already injected (cached)`);
+    return true;
+  }
   try {
     const r = await chrome.tabs.sendMessage(tabId, { action: "ping" }).catch(() => null);
     if (r?.pong) {
       INJECTED.add(tabId);
+      log(`Tab ${tabId}: content script responded to ping`);
       return true;
     }
     await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
     INJECTED.add(tabId);
+    log(`Tab ${tabId}: content script injected successfully`);
     return true;
-  } catch {
+  } catch (e) {
     INJECTED.delete(tabId);
+    log(`Tab ${tabId}: failed to inject content script -`, e?.message);
     return false;
   }
 }
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  if (!CFG.enabled || !CFG.enableTabSwitch) return;
-
   const newTabId = activeInfo.tabId;
   const oldTabId = LAST_TAB;
+  log(`Tab activated: ${oldTabId} -> ${newTabId}`);
+
+  if (!CFG.enabled || !CFG.enableTabSwitch) {
+    log(`Tab switch ignored: enabled=${CFG.enabled}, enableTabSwitch=${CFG.enableTabSwitch}`);
+    LAST_TAB = newTabId;
+    return;
+  }
+
   LAST_TAB = newTabId;
 
   if (TIMERS[newTabId]) {
@@ -88,23 +114,34 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (oldTabId && oldTabId !== newTabId) {
     try {
       const tab = await chrome.tabs.get(oldTabId);
-      if (tab?.url && isSiteEnabled(tab.url)) {
+      const host = getHost(tab?.url);
+      const siteOk = isSiteEnabled(tab?.url);
+      log(`Previous tab ${oldTabId}: url=${host}, siteEnabled=${siteOk}`);
+      if (tab?.url && siteOk) {
         if (await ensureScript(oldTabId)) {
+          log(`Sending tryPiP to tab ${oldTabId} (reason: tabSwitch)`);
           chrome.tabs.sendMessage(oldTabId, { action: "tryPiP", reason: "tabSwitch" })
-            .catch(() => INJECTED.delete(oldTabId));
+            .catch((e) => {
+              log(`Failed to send tryPiP to tab ${oldTabId}:`, e?.message);
+              INJECTED.delete(oldTabId);
+            });
         }
       }
-    } catch { }
+    } catch (e) {
+      log(`Error accessing previous tab ${oldTabId}:`, e?.message);
+    }
   }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     INJECTED.delete(tabId);
+    log(`Tab ${tabId} loading, cleared injection cache`);
   }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  log(`Tab ${tabId} removed, cleaning up`);
   INJECTED.delete(tabId);
   if (TIMERS[tabId]) {
     clearTimeout(TIMERS[tabId]);
@@ -115,9 +152,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
   const tabId = sender.tab?.id;
+  log(`Message received: action=${msg.action}, tabId=${tabId}`);
 
   if (msg.action === "isVivaldi") {
     if (!IS_VIVALDI) {
+      log(`Responding to isVivaldi: isVivaldi=false`);
       sendRespond({ isVivaldi: false, isPanel: false });
       return false;
     }
@@ -143,15 +182,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
                   isPanel = true;
                 }
               }
-            } catch { }
+            } catch (e) {
+              log(`Error parsing vivExtData:`, e?.message);
+            }
           }
         }
+        log(`Responding to isVivaldi: isVivaldi=true, isPanel=${isPanel}`);
         sendRespond({ isVivaldi: true, isPanel });
-      } catch {
+      } catch (e) {
+        log(`Error in isVivaldi handler:`, e?.message);
         sendRespond({ isVivaldi: true, isPanel: false });
       }
     })();
     return true;
   }
+
+  if (msg.action === "pipEntered") {
+    log(`PiP entered in tab ${tabId} (reason: ${msg.reason})`);
+  } else if (msg.action === "pipExited") {
+    log(`PiP exited in tab ${tabId}`);
+  }
+
   return false;
 });
+
+log("Background service worker initialized");

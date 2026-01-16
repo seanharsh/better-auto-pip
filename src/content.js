@@ -47,7 +47,12 @@
     return !!(window.vivaldi) || navigator.userAgent.includes("Vivaldi") || (navigator.vendor && navigator.vendor.includes("Vivaldi"));
   }
 
-  const log = () => { };
+  const DEBUG = true;
+  const log = (...args) => {
+    if (!DEBUG) return;
+    if (!isExtensionValid()) return;
+    console.log("[BetterAutoPiP]", ...args);
+  };
 
   function hostKey() {
     try { return location.host; } catch { return ""; }
@@ -64,34 +69,58 @@
   function arm(minutes) {
     state.armedUntil = now() + minutes * 60000;
     state.tabSwitchFailCount = 0;
+    log(`Armed for ${minutes} minutes`);
   }
 
   function checkAutoPiPSupport() {
     try {
-      if (!navigator.mediaSession) return false;
-      try {
-        navigator.mediaSession.setActionHandler("enterpictureinpicture", null);
-        return true;
-      } catch {
+      if (!navigator.mediaSession) {
+        log("MediaSession API not available");
         return false;
       }
-    } catch {
+      try {
+        navigator.mediaSession.setActionHandler("enterpictureinpicture", null);
+        log("MediaSession enterpictureinpicture action supported");
+        return true;
+      } catch {
+        log("MediaSession enterpictureinpicture action not supported");
+        return false;
+      }
+    } catch (e) {
+      log("Error checking MediaSession support:", e?.message);
       return false;
     }
   }
 
   async function registerMediaSessionHandler() {
-    if (state.mediaSessionHandlerRegistered || !state.supportsAutoPiP) return;
+    if (state.mediaSessionHandlerRegistered || !state.supportsAutoPiP) {
+      log(`MediaSession handler skip: registered=${state.mediaSessionHandlerRegistered}, supported=${state.supportsAutoPiP}`);
+      return;
+    }
     try {
       const cfg = await loadConfig();
-      if (!cfg.enabled || !isSiteEnabled(cfg, "tab")) return;
+      if (!cfg.enabled || !isSiteEnabled(cfg, "tab")) {
+        log("MediaSession handler not registered: extension disabled or site not enabled for tab");
+        return;
+      }
 
       navigator.mediaSession.setActionHandler("enterpictureinpicture", async () => {
+        log("MediaSession enterpictureinpicture action triggered");
         const currentCfg = await loadConfig();
-        if (!currentCfg.enabled || !isSiteEnabled(currentCfg, "tab")) return;
+        if (!currentCfg.enabled || !isSiteEnabled(currentCfg, "tab")) {
+          log("MediaSession PiP ignored: disabled");
+          return;
+        }
 
         const video = getBestVideo();
-        if (!video || document.pictureInPictureElement) return;
+        if (!video) {
+          log("MediaSession PiP: no video found");
+          return;
+        }
+        if (document.pictureInPictureElement) {
+          log("MediaSession PiP: already in PiP");
+          return;
+        }
 
         try {
           await video.requestPictureInPicture();
@@ -99,12 +128,18 @@
           state.tabSwitchFailCount = 0;
           hideToast();
           hideBanner();
+          log("Entered PiP via MediaSession API");
           if (chrome.runtime?.id) chrome.runtime.sendMessage({ action: "pipEntered", reason: "mediaSession" });
-        } catch { }
+        } catch (e) {
+          log("MediaSession PiP request failed:", e?.name, e?.message);
+        }
       });
 
       state.mediaSessionHandlerRegistered = true;
-    } catch { }
+      log("MediaSession handler registered");
+    } catch (e) {
+      log("Failed to register MediaSession handler:", e?.message);
+    }
   }
 
   function unregisterMediaSessionHandler() {
@@ -112,7 +147,10 @@
     try {
       navigator.mediaSession.setActionHandler("enterpictureinpicture", null);
       state.mediaSessionHandlerRegistered = false;
-    } catch { }
+      log("MediaSession handler unregistered");
+    } catch (e) {
+      log("Failed to unregister MediaSession handler:", e?.message);
+    }
   }
 
   function getViewportSize() {
@@ -129,18 +167,33 @@
   function isVivaldiPanel() {
     try {
       const { w, h } = getViewportSize();
-      if (window.name && window.name.startsWith('vivaldi-webpanel-')) return true;
-      if (window.location.href.includes('vivaldi://webpanel') || window.location.href.includes('vivaldi-webpanel')) return true;
+      if (window.name && window.name.startsWith('vivaldi-webpanel-')) {
+        log("Panel detected via window.name");
+        return true;
+      }
+      if (window.location.href.includes('vivaldi://webpanel') || window.location.href.includes('vivaldi-webpanel')) {
+        log("Panel detected via URL");
+        return true;
+      }
       const screenW = window.screen.width;
-      return window === window.top && window.opener === null && w < (screenW * 0.6) && (h / w) > 1.2;
-    } catch {
+      const isPanel = window === window.top && window.opener === null && w < (screenW * 0.6) && (h / w) > 1.2;
+      if (isPanel) {
+        log(`Panel detected via heuristic: w=${w}, screenW=${screenW}, h=${h}, aspect=${(h/w).toFixed(2)}`);
+      }
+      return isPanel;
+    } catch (e) {
+      log("Panel detection error:", e?.message);
       return false;
     }
   }
 
   function isCollapsed(cfg) {
     const { w, h } = getViewportSize();
-    return (w > 0 && w <= cfg.collapseWidthPx) || (h > 0 && h <= cfg.collapseHeightPx);
+    const collapsed = (w > 0 && w <= cfg.collapseWidthPx) || (h > 0 && h <= cfg.collapseHeightPx);
+    if (collapsed) {
+      log(`Collapse detected: w=${w}, h=${h}, thresholds: w<=${cfg.collapseWidthPx}, h<=${cfg.collapseHeightPx}`);
+    }
+    return collapsed;
   }
 
   function visibleAreaScore(video) {
@@ -191,13 +244,24 @@
           if (iframeDoc) {
             const iVideos = iframeDoc.querySelectorAll("video");
             for (let j = 0; j < iVideos.length; j++) videos.push(iVideos[j]);
+            if (iVideos.length > 0) {
+              log(`Found ${iVideos.length} video(s) in iframe`);
+            }
           }
         } catch { }
       }
-    } catch { }
+    } catch (e) {
+      log("Error checking iframes:", e?.message);
+    }
 
     state.cachedVideos = videos;
     state.cachedVideosTs = t;
+    log(`Total videos found: ${videos.length}`);
+
+    if (videos.length === 0) {
+      log("No video elements found");
+      return null;
+    }
 
     let best = null;
     let bestScore = 0;
@@ -221,22 +285,40 @@
         }
       } catch { }
     }
-    return best || fallback || (videos.length > 0 ? videos[0] : null);
+
+    const selected = best || fallback || videos[0];
+    if (selected) {
+      log(`Selected video: paused=${selected.paused}, readyState=${selected.readyState}, duration=${selected.duration}`);
+    }
+    return selected;
   }
 
   async function tryEnterPiP(cfg, reason = "unknown") {
     const t = now();
-    if (t - state.lastAttemptTs < 1500) return;
+    if (t - state.lastAttemptTs < 1500) {
+      log(`PiP attempt throttled (reason: ${reason})`);
+      return;
+    }
     state.lastAttemptTs = t;
 
     const video = getBestVideo();
-    if (!video || document.pictureInPictureElement) return;
+    if (!video) {
+      log(`PiP attempt failed: no video found (reason: ${reason})`);
+      return;
+    }
+    if (document.pictureInPictureElement) {
+      log(`PiP attempt skipped: already in PiP (reason: ${reason})`);
+      return;
+    }
 
-    const isArmed = t < state.armedUntil;
+    const armed = t < state.armedUntil;
     const timeSinceInteraction = t - state.lastUserInteraction;
     const hasRecentInteraction = timeSinceInteraction < 5000;
 
-    if (reason === "tabSwitch" && !isArmed && !hasRecentInteraction && timeSinceInteraction > 10000) {
+    log(`Attempting PiP (reason: ${reason}, armed: ${armed}, recentInteraction: ${hasRecentInteraction}, timeSinceInteraction: ${Math.round(timeSinceInteraction/1000)}s, failCount: ${state.tabSwitchFailCount})`);
+
+    if (reason === "tabSwitch" && !armed && !hasRecentInteraction && timeSinceInteraction > 10000) {
+      log("Tab switch without recent interaction - waiting briefly...");
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
@@ -246,18 +328,23 @@
       state.tabSwitchFailCount = 0;
       hideToast();
       hideBanner();
+      log("Entered PiP successfully");
       if (chrome.runtime?.id) chrome.runtime.sendMessage({ action: "pipEntered", reason });
     } catch (e) {
+      log(`PiP request failed: ${e?.name} - ${e?.message}`);
       if (e?.name === "NotAllowedError" || e?.message?.includes("gesture")) {
         if (reason === "tabSwitch") {
           state.tabSwitchFailCount++;
+          log(`Tab switch failure #${state.tabSwitchFailCount}: armed=${armed}, timeSinceInteraction=${Math.round(timeSinceInteraction/1000)}s`);
           if (state.tabSwitchFailCount === 1 && now() >= state.armedUntil) {
             if (cfg.showBlockAlerts !== false) {
+              log("First tab switch PiP failure - showing notification banner");
               showInteractionBanner(cfg, "tab");
             }
           }
         } else {
           if (cfg.showBlockAlerts !== false) {
+            log("Panel/collapse PiP failure - showing notification banner");
             showInteractionBanner(cfg, "panel");
           }
         }
@@ -266,14 +353,21 @@
   }
 
   async function maybeExitPiP(cfg) {
-    if (!cfg.exitOnExpand) return;
+    log(`maybeExitPiP called: exitOnExpand=${cfg.exitOnExpand}, inPiP=${!!document.pictureInPictureElement}`);
+    if (!cfg.exitOnExpand) {
+      log("exitOnExpand disabled, not exiting PiP");
+      return;
+    }
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
         state.isInPiP = false;
+        log("Exited PiP");
         if (chrome.runtime?.id) chrome.runtime.sendMessage({ action: "pipExited" });
       }
-    } catch { }
+    } catch (e) {
+      log("Failed to exit PiP:", e?.message);
+    }
   }
 
   function showToast(cfg, text) {
@@ -356,6 +450,7 @@
       if (state.floatingToggle) {
         state.floatingToggle.remove();
         state.floatingToggle = null;
+        log("Floating toggle removed (disabled in config)");
       }
       return;
     }
@@ -369,6 +464,7 @@
 
     const sKey = isPanel ? 'enablePanel' : 'enableTab';
     const isEnabled = (cfg.siteSettings[host] || {})[sKey] !== false;
+    log(`Creating floating toggle: host=${host}, isPanel=${isPanel}, enabled=${isEnabled}`);
 
     // Optimization: Create element only if needed, use fragment if complex (here simple)
     const el = document.createElement("div");
@@ -386,6 +482,7 @@
       const cKey = cPanel ? 'enablePanel' : 'enableTab';
       const cEnabled = (cCfg.siteSettings[cHost] || {})[cKey] !== false;
       const nEnabled = !cEnabled;
+      log(`Floating toggle clicked: ${cKey} ${cEnabled} -> ${nEnabled} for ${cHost}`);
       const nSettings = { ...cCfg.siteSettings, [cHost]: { ...(cCfg.siteSettings[cHost] || {}), [cKey]: nEnabled } };
 
       // Optimistic UI update
@@ -493,9 +590,13 @@
     const cfg = await loadConfig();
     if (!cfg.enabled) return;
     const curr = document.visibilityState;
-    if (curr === "hidden" && state.lastVisibilityState === "visible") {
+    const prev = state.lastVisibilityState;
+    log(`Visibility changed: ${prev} -> ${curr}`);
+
+    if (curr === "hidden" && prev === "visible") {
       if (isSiteEnabled(cfg, 'tab')) {
         const d = cfg.tabSwitchDelay;
+        log(`Tab hidden, scheduling PiP attempt in ${d}ms (mediaSession: ${state.mediaSessionHandlerRegistered})`);
         if (state.mediaSessionHandlerRegistered) {
           setTimeout(async () => {
             if (!document.pictureInPictureElement && !state.isInPiP) await tryEnterPiP(cfg, "tabSwitch");
@@ -503,9 +604,12 @@
         } else {
           setTimeout(() => tryEnterPiP(cfg, "tabSwitch"), d);
         }
+      } else {
+        log("Tab hidden but site not enabled for tab switching");
       }
     }
-    if (curr === "visible" && state.lastVisibilityState === "hidden") {
+    if (curr === "visible" && prev === "hidden") {
+      log("Tab visible again");
       if (cfg.exitOnExpand) await maybeExitPiP(cfg);
     }
     state.lastVisibilityState = curr;
@@ -513,6 +617,7 @@
   }
 
   chrome.runtime.onMessage.addListener((m, s, r) => {
+    log(`Message received: action=${m.action}, reason=${m.reason}`);
     if (m.action === "ping") { r({ pong: true }); return false; }
     if (m.action === "tryPiP") {
       loadConfig().then(c => tryEnterPiP(c, m.reason || "background"));
@@ -523,6 +628,7 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'sync') {
+      log("Storage changed, invalidating config cache");
       state.cachedConfig = null;
       updateFloatingToggle();
     }
@@ -543,28 +649,36 @@
         if (added) break;
       }
       if (added) {
+        log("New video element detected in DOM");
         state.cachedVideosTs = 0;
         setTimeout(tick, 500);
         setTimeout(registerMediaSessionHandler, 600);
       }
     });
     o.observe(document.documentElement, { childList: true, subtree: true });
+    log("Video observer set up");
   }
 
   function initYouTube() {
     if (!location.host.includes("youtube.com")) return;
+    log("YouTube detected, setting up YouTube-specific handlers");
     const chk = () => {
       const v = document.querySelector("#movie_player video, .html5-video-player video");
-      if (v) { }
+      if (v) {
+        log("YouTube video player found");
+      }
     };
     chk(); setTimeout(chk, 1000); setTimeout(chk, 2000);
     document.addEventListener("yt-navigate-finish", () => {
+      log("YouTube navigation detected");
       state.cachedVideosTs = 0;
       setTimeout(tick, 1000);
     }, { passive: true });
   }
 
   (async function init() {
+    log(`Content script initialized on ${location.host}`);
+    log(`Vivaldi: ${isVivaldi()}, supportsAutoPiP: ${checkAutoPiPSupport()}`);
     state.supportsAutoPiP = checkAutoPiPSupport();
     hookViewportEvents();
     setupVideoObserver();
