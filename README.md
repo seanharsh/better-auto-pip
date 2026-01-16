@@ -28,7 +28,7 @@ Automatically enable Picture-in-Picture for videos when switching tabs or collap
 ## Installation
 
 ### From Chrome Web Store
-[Link will be added after publication]
+[Better Auto PiP on Chrome Web Store](https://chromewebstore.google.com/detail/better-auto-pip/fhlnhgbimopgpeemkifjgeepoinamikl)
 
 ### Manual Installation (Development)
 1. Clone or download this repository
