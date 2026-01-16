@@ -1,10 +1,12 @@
 <!doctype html>
 <html>
+
 <head>
   <meta charset="utf-8" />
   <title>Better Auto PiP - Options</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
   <h1>Better Auto PiP</h1>
 
@@ -31,7 +33,18 @@
     <input type="checkbox" id="exitOnExpand" />
     <span>Exit PiP when returning to tab/panel</span>
   </label>
-  <div class="hint" style="margin-left: 30px; margin-top: -4px;">When enabled, video returns to the tab when you switch back or expand the panel.</div>
+  <div class="hint" style="margin-left: 30px; margin-top: -4px;">When enabled, video returns to the tab when you switch
+    back or expand the panel.</div>
+
+  <label class="row">
+    <input type="checkbox" id="showFloatingButton" />
+    <span>Show on-screen "Auto PiP" button</span>
+  </label>
+
+  <label class="row">
+    <input type="checkbox" id="showBlockAlerts" />
+    <span>Show notification when PiP is blocked</span>
+  </label>
 
   <h2>Settings</h2>
 
@@ -62,12 +75,13 @@
   </div>
 
   <h2>Per-Site Settings</h2>
-  <p class="hint">Configure PiP behavior for supported sites. Additional sites will appear automatically when visited.</p>
+  <p class="hint">Configure PiP behavior for supported sites. Additional sites will appear automatically when visited.
+  </p>
 
   <div id="sites"></div>
 
   <div class="actions">
-    <button id="save">Save</button>
+
     <span id="status"></span>
   </div>
 
@@ -82,4 +96,5 @@
 
   <script src="options.js"></script>
 </body>
+
 </html>
