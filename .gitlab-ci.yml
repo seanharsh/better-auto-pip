@@ -1,0 +1,107 @@
+stages:
+  - build
+  - mirror
+  - release
+
+variables:
+  EXTENSION_DIR: "src"
+
+# Build extension on every push (works on both Linux and macOS)
+build:
+  stage: build
+  before_script:
+    # Install dependencies based on OS
+    - |
+      if [ -f /etc/alpine-release ]; then
+        # Alpine Linux (Docker)
+        apk add --no-cache zip
+      elif [ "$(uname)" = "Darwin" ]; then
+        # macOS
+        which zip || echo "zip is required but already installed on macOS"
+      else
+        # Other Linux
+        apt-get update && apt-get install -y zip || yum install -y zip || true
+      fi
+  script:
+    - cd $EXTENSION_DIR
+    - zip -r ../better-auto-pip-$CI_COMMIT_SHORT_SHA.zip . -x "*.git*" -x "*.DS_Store" -x "node_modules/*"
+  artifacts:
+    paths:
+      - better-auto-pip-$CI_COMMIT_SHORT_SHA.zip
+    expire_in: 30 days
+  only:
+    - dev
+    - main
+
+# Mirror main branch to GitHub (Linux preferred, fallback to macOS)
+mirror-to-github:
+  stage: mirror
+  before_script:
+    # Install dependencies based on OS
+    - |
+      if [ -f /etc/alpine-release ]; then
+        # Alpine Linux (Docker)
+        apk add --no-cache git openssh-client rsync
+      elif [ "$(uname)" = "Darwin" ]; then
+        # macOS
+        which git || echo "git required"
+        which ssh || echo "ssh required"
+      else
+        # Other Linux
+        apt-get update && apt-get install -y git openssh-client rsync || yum install -y git openssh-clients rsync || true
+      fi
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan github.com >> ~/.ssh/known_hosts
+    - eval $(ssh-agent -s)
+    # Add GitHub deploy key from GitLab CI/CD variable
+    - echo "$GITHUB_DEPLOY_KEY" | tr -d '\r' | ssh-add -
+  script:
+    # Clone current repo to temp directory
+    - git clone --branch main . /tmp/github-mirror
+    - cd /tmp/github-mirror
+    # Remove GitLab-specific files (add more exclusions here as needed)
+    - rm -f .gitlab-ci.yml
+    - rm -f setup-remotes.sh
+    - rm -f GIT_SETUP.md
+    - rm -f TODO.md
+    # Commit the changes
+    - git config user.name "GitLab CI"
+    - git config user.email "ci@gitlab.com"
+    - git add -A
+    - git diff-index --quiet HEAD || git commit -m "Mirror from GitLab [skip ci]"
+    # Push to GitHub
+    - git remote add github git@github.com:seanharsh/Better-Auto-PiP.git || true
+    - git push github main --force
+  only:
+    - main
+  when: on_success
+
+# Create release package on main push (works on both Linux and macOS)
+release:
+  stage: release
+  before_script:
+    # Install dependencies based on OS
+    - |
+      if [ -f /etc/alpine-release ]; then
+        # Alpine Linux (Docker)
+        apk add --no-cache zip jq
+      elif [ "$(uname)" = "Darwin" ]; then
+        # macOS
+        which zip || echo "zip is required but already installed on macOS"
+        which jq || brew install jq
+      else
+        # Other Linux
+        apt-get update && apt-get install -y zip jq || yum install -y zip jq || true
+      fi
+  script:
+    - cd $EXTENSION_DIR
+    - VERSION=$(jq -r '.version' manifest.json)
+    - zip -r ../better-auto-pip-v$VERSION.zip . -x "*.git*" -x "*.DS_Store" -x "node_modules/*"
+    - echo "Created release package for version $VERSION"
+  artifacts:
+    paths:
+      - better-auto-pip-v*.zip
+    expire_in: never
+  only:
+    - main

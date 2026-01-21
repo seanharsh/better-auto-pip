@@ -8,13 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
 - Planned features go here
 
 ### Changed
+
 - Planned changes go here
 
 ### Fixed
+
 - Planned fixes go here
+
+## [v0.2.1] - 2026-01-21
+
+### Changed
+
+- Major code refactoring for improved functionality and performance (thanks @thomasboyle)
+- Simplified background service worker architecture
+- Streamlined content script with better state management
+- Added configurable DEBUG flag for logging
 
 ## [v0.2.0] - 2026-01-07
 
@@ -63,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chrome Manifest V3
 - Service worker architecture
 
-[Unreleased]: https://github.com/seanharsh/Better-Auto-PiP/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/seanharsh/Better-Auto-PiP/compare/v0.2.1...HEAD
+[v0.2.1]: https://github.com/seanharsh/Better-Auto-PiP/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/seanharsh/Better-Auto-PiP/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/seanharsh/Better-Auto-PiP/releases/tag/v0.1.0
