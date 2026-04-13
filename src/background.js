@@ -14,6 +14,7 @@ const DEFAULTS = {
 
 let CFG = DEFAULTS;
 let IS_VIVALDI = false;
+let VIVALDI_DETECTION_COMPLETE = false;
 let LAST_TAB = null;
 const TIMERS = {};
 const INJECTED = new Set();
@@ -40,6 +41,7 @@ chrome.storage.onChanged.addListener((changes) => {
   if (typeof chrome.vivaldi !== 'undefined') {
     IS_VIVALDI = true;
     log("Vivaldi detected via chrome.vivaldi API");
+    VIVALDI_DETECTION_COMPLETE = true;
     return;
   }
   if (chrome.runtime?.getBrowserInfo) {
@@ -47,6 +49,7 @@ chrome.storage.onChanged.addListener((changes) => {
     if (info?.name?.toLowerCase().includes('vivaldi')) {
       IS_VIVALDI = true;
       log("Vivaldi detected via getBrowserInfo");
+      VIVALDI_DETECTION_COMPLETE = true;
       return;
     }
   }
@@ -57,6 +60,7 @@ chrome.storage.onChanged.addListener((changes) => {
       log("Vivaldi detected via vivExtData");
     }
   } catch { }
+  VIVALDI_DETECTION_COMPLETE = true;
   log(`Vivaldi detection complete: IS_VIVALDI=${IS_VIVALDI}`);
 })();
 
@@ -155,13 +159,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
   log(`Message received: action=${msg.action}, tabId=${tabId}`);
 
   if (msg.action === "isVivaldi") {
-    if (!IS_VIVALDI) {
-      log(`Responding to isVivaldi: isVivaldi=false`);
-      sendRespond({ isVivaldi: false, isPanel: false });
-      return false;
-    }
-
     (async () => {
+      // Wait for Vivaldi detection to complete
+      let waitCount = 0;
+      while (!VIVALDI_DETECTION_COMPLETE && waitCount < 50) {
+        await new Promise(r => setTimeout(r, 10));
+        waitCount++;
+      }
+
+      if (!IS_VIVALDI) {
+        log(`Responding to isVivaldi: isVivaldi=false`);
+        sendRespond({ isVivaldi: false, isPanel: false });
+        return;
+      }
+
       try {
         const winId = sender.tab.windowId;
         const win = await chrome.windows.get(winId).catch(() => null);
@@ -176,7 +187,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
 
               if (webPanelActive) {
                 let t = sender.tab;
-                if (!t.width) t = await chrome.tabs.get(tabId);
+                if (!t.width) t = await chrome.tabs.get(sender.tab.id);
 
                 if (t.width && win.width && (t.width / win.width < 0.7)) {
                   isPanel = true;
