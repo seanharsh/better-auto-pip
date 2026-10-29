@@ -123,6 +123,13 @@
           return;
         }
 
+        const delay = Math.min(Math.max(+currentCfg.tabSwitchDelay || 0, 0), 4000);
+        if (delay > 0) {
+          log(`MediaSession PiP: honoring tabSwitchDelay ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          if (document.pictureInPictureElement) return;
+        }
+
         try {
           await video.requestPictureInPicture();
           state.isInPiP = true;
@@ -207,6 +214,18 @@
     return (w * h) * (onScreen ? 1 : 0.2);
   }
 
+  // querySelectorAll that also descends into open shadow roots (web-component players).
+  function queryAllDeep(root, selector, out = []) {
+    const found = root.querySelectorAll(selector);
+    for (let i = 0; i < found.length; i++) out.push(found[i]);
+    const all = root.querySelectorAll("*");
+    for (let i = 0; i < all.length; i++) {
+      const sr = all[i].shadowRoot;
+      if (sr) queryAllDeep(sr, selector, out);
+    }
+    return out;
+  }
+
   function getBestVideo() {
     const t = now();
     if (state.cachedVideos && t - state.cachedVideosTs < 1000) {
@@ -229,8 +248,7 @@
     }
 
     const videos = [];
-    const docVideos = document.querySelectorAll("video");
-    for (let i = 0; i < docVideos.length; i++) videos.push(docVideos[i]);
+    queryAllDeep(document, "video", videos);
 
     if (location.host.includes("youtube.com")) {
       const ytVideo = document.querySelector("#movie_player video, .html5-video-player video, ytd-player video");
@@ -243,7 +261,7 @@
         try {
           const iframeDoc = iframes[i].contentDocument || iframes[i].contentWindow?.document;
           if (iframeDoc) {
-            const iVideos = iframeDoc.querySelectorAll("video");
+            const iVideos = queryAllDeep(iframeDoc, "video");
             for (let j = 0; j < iVideos.length; j++) videos.push(iVideos[j]);
             if (iVideos.length > 0) {
               log(`Found ${iVideos.length} video(s) in iframe`);

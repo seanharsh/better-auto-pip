@@ -5,7 +5,7 @@ const DEFAULTS = {
   debounceMs: 250,
   armMinutes: 10,
   exitOnExpand: false,
-  siteEnabled: {},
+  siteSettings: {},
   enableTabSwitch: true,
   tabSwitchDelay: 500,
   showFloatingButton: true,
@@ -60,6 +60,13 @@ chrome.storage.onChanged.addListener((changes) => {
       log("Vivaldi detected via vivExtData");
     }
   } catch { }
+  try {
+    const wins = await chrome.windows.getAll();
+    if (wins.some(w => 'vivExtData' in w)) {
+      IS_VIVALDI = true;
+      log("Vivaldi detected via vivExtData (any window)");
+    }
+  } catch { }
   VIVALDI_DETECTION_COMPLETE = true;
   log(`Vivaldi detection complete: IS_VIVALDI=${IS_VIVALDI}`);
 })();
@@ -71,7 +78,7 @@ const getHost = (url) => {
 const isSiteEnabled = (url) => {
   if (!url) return false;
   const host = getHost(url);
-  return host && CFG.siteEnabled[host] !== false;
+  return !!host && (CFG.siteSettings?.[host] || {}).enableTab !== false;
 };
 
 async function ensureScript(tabId) {
@@ -123,12 +130,19 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
       log(`Previous tab ${oldTabId}: url=${host}, siteEnabled=${siteOk}`);
       if (tab?.url && siteOk) {
         if (await ensureScript(oldTabId)) {
-          log(`Sending tryPiP to tab ${oldTabId} (reason: tabSwitch)`);
-          chrome.tabs.sendMessage(oldTabId, { action: "tryPiP", reason: "tabSwitch" })
-            .catch((e) => {
-              log(`Failed to send tryPiP to tab ${oldTabId}:`, e?.message);
-              INJECTED.delete(oldTabId);
-            });
+          const delay = Math.max(+CFG.tabSwitchDelay || 0, 0);
+          log(`Scheduling tryPiP for tab ${oldTabId} in ${delay}ms (reason: tabSwitch)`);
+          clearTimeout(TIMERS[oldTabId]);
+          // Cancelled in onActivated if the user returns to the tab before the delay elapses
+          TIMERS[oldTabId] = setTimeout(() => {
+            delete TIMERS[oldTabId];
+            log(`Sending tryPiP to tab ${oldTabId} (reason: tabSwitch)`);
+            chrome.tabs.sendMessage(oldTabId, { action: "tryPiP", reason: "tabSwitch" })
+              .catch((e) => {
+                log(`Failed to send tryPiP to tab ${oldTabId}:`, e?.message);
+                INJECTED.delete(oldTabId);
+              });
+          }, delay);
         }
       }
     } catch (e) {
@@ -167,6 +181,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
         waitCount++;
       }
 
+      if (!IS_VIVALDI) {
+        const w = await chrome.windows.get(sender.tab.windowId).catch(() => null);   // the asking tab's own window
+        if (w && 'vivExtData' in w) IS_VIVALDI = true;
+      }
       if (!IS_VIVALDI) {
         log(`Responding to isVivaldi: isVivaldi=false`);
         sendRespond({ isVivaldi: false, isPanel: false });
