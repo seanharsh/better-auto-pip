@@ -177,10 +177,10 @@ let customSyncChain = Promise.resolve();
 async function doSyncCustomSites() {
   const { customSites, allSites } = await chrome.storage.sync.get({ customSites: [], allSites: false });
   const wanted = new Map();
-  // "Allow on all sites": only when the switch is a real `true` AND the user granted *://*/*. Top frame only (allFrames:false): not inside every ad/embed iframe;
-  // embedded players are handled by the keyboard shortcut, which injects into all frames on demand.
+  // "Allow on all sites": only when the switch is a real `true` AND the user granted *://*/*. All frames, so embedded players can mirror their
+  // video to the top frame; in sub-frames the content script stays quiet (no floating button) and only acts once a video plays.
   if (allSites === true && (await chrome.permissions.contains({ origins: [BAPCustomSites.ALL_SITES_PATTERN] }))) {
-    wanted.set(BAPCustomSites.ALL_SITES_SCRIPT_ID, { id: BAPCustomSites.ALL_SITES_SCRIPT_ID, matches: [BAPCustomSites.ALL_SITES_PATTERN], js: ['content.js'], allFrames: false, runAt: 'document_idle', persistAcrossSessions: true });
+    wanted.set(BAPCustomSites.ALL_SITES_SCRIPT_ID, { id: BAPCustomSites.ALL_SITES_SCRIPT_ID, matches: [BAPCustomSites.ALL_SITES_PATTERN], js: ['content.js'], allFrames: true, runAt: 'document_idle', persistAcrossSessions: true });
   }
   for (const host of BAPCustomSites.sanitizeList(customSites)) {
     const matches = BAPCustomSites.toMatchPatterns(host);
@@ -213,6 +213,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
 
   if (msg.action === "syncCustomSites") {
     syncCustomSites().then(() => sendRespond({ ok: true }));
+    return true;
+  }
+
+  // Mirror signalling between an embedded player frame and the top frame of the same tab (see content.js "Mirror").
+  if (msg.action === "mirror") {
+    if (!tabId) return false;
+    chrome.tabs.sendMessage(tabId, { ...msg, fromFrame: sender.frameId || 0 }, { frameId: msg.toFrame || 0 })
+      .then((r) => sendRespond(r || { ok: false }), () => sendRespond({ ok: false }));
     return true;
   }
 
@@ -291,7 +299,7 @@ if (chrome.commands && chrome.commands.onCommand) {
     chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: () => {
-        const videos = Array.from(document.querySelectorAll("video"));
+        const videos = Array.from(document.querySelectorAll("video")).filter((v) => !v.hasAttribute("data-bap-mirror"));
         let best = null;
         let bestArea = 0;
         for (const v of videos) {

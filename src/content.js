@@ -35,6 +35,10 @@
     cachedConfigTs: 0
   };
 
+  const IS_TOP = (() => { try { return window === window.top; } catch { return false; } })();
+  // Mirror: sender side (in an embedded player frame) or receiver side (in the top frame).
+  const mirror = { pc: null, source: null, video: null, fromFrame: null, pending: false, lastTry: 0 };
+
   function isExtensionValid() {
     try {
       return !!(chrome?.runtime?.id);
@@ -113,7 +117,7 @@
           return;
         }
 
-        const video = getBestVideo();
+        const video = pickPiPVideo();
         if (!video) {
           log("MediaSession PiP: no video found");
           return;
@@ -249,6 +253,8 @@
 
     const videos = [];
     queryAllDeep(document, "video", videos);
+    const mi = videos.indexOf(mirror.video);
+    if (mi >= 0) videos.splice(mi, 1);
 
     if (location.host.includes("youtube.com")) {
       const ytVideo = document.querySelector("#movie_player video, .html5-video-player video, ytd-player video");
@@ -313,6 +319,11 @@
   }
 
   async function tryEnterPiP(cfg, reason = "unknown") {
+    // Without a fresh click in this frame the request can only fail; the top frame's mirror handles PiP instead (no banner here).
+    if (!IS_TOP && mirror.pc && reason === "tabSwitch" && !navigator.userActivation?.isActive) {
+      log("Tab switch: video is mirrored to the top frame, which handles PiP");
+      return;
+    }
     const t = now();
     if (t - state.lastAttemptTs < 1500) {
       log(`PiP attempt throttled (reason: ${reason})`);
@@ -320,7 +331,7 @@
     }
     state.lastAttemptTs = t;
 
-    const video = getBestVideo();
+    const video = pickPiPVideo();
     if (!video) {
       log(`PiP attempt failed: no video found (reason: ${reason})`);
       return;
@@ -462,6 +473,7 @@
   }
 
   async function updateFloatingToggle() {
+    if (!IS_TOP) return;
     if (!document.body) return setTimeout(updateFloatingToggle, 500);
     const cfg = await loadConfig();
 
@@ -647,9 +659,153 @@
     tick();
   }
 
+  // ---- Mirror: PiP for players inside cross-origin iframes ----
+  // Browsers auto-PiP only the TOP frame's media session (Chromium: auto_picture_in_picture_tab_helper.cc), so a player inside an embedded
+  // iframe never gets the call. The player frame streams a live copy of its video (captureStream -> RTCPeerConnection, signalled through the
+  // background) to a hidden, muted <video> in the top frame, whose handler puts that copy in PiP. The sound stays with the original player.
+  const MIRROR_MIN_W = 200, MIRROR_MIN_H = 112;
+
+  function pickPiPVideo() {
+    const real = getBestVideo();
+    if (real && !real.paused && !real.ended) return real;
+    if (IS_TOP && mirror.video && mirror.pc) return mirror.video;
+    return real;
+  }
+
+  function waitIce(pc) {
+    if (pc.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise((r) => {
+      pc.addEventListener("icegatheringstatechange", () => { if (pc.iceGatheringState === "complete") r(); });
+      setTimeout(r, 2000);
+    });
+  }
+
+  function sendMirror(msg) {
+    try { return chrome.runtime.sendMessage({ action: "mirror", ...msg }).catch(() => null); } catch { return Promise.resolve(null); }
+  }
+
+  // Sender (embedded player frame)
+  function stopMirrorSender(why) {
+    if (!mirror.pc) return;
+    try { mirror.pc.close(); } catch { }
+    mirror.pc = null;
+    mirror.source = null;
+    log(`Mirror stopped (${why})`);
+    sendMirror({ type: "stop" });
+  }
+
+  async function checkMirrorSender() {
+    if (IS_TOP || !isExtensionValid() || mirror.pending) return;
+    const cfg = await loadConfig();
+    if (!cfg.enabled) return stopMirrorSender("disabled");
+    if (mirror.source && (!mirror.source.isConnected || mirror.source.ended)) stopMirrorSender("video gone");
+    const v = getBestVideo();
+    if (!v || v.paused || v.ended || v.readyState < 2 || v.clientWidth < MIRROR_MIN_W || v.clientHeight < MIRROR_MIN_H) return;
+    if (mirror.source === v && mirror.pc && !["failed", "closed"].includes(mirror.pc.connectionState)) return;
+    if (now() - mirror.lastTry < 5000) return;
+    mirror.lastTry = now();
+    mirror.pending = true;
+    try {
+      stopMirrorSender("restart");
+      let stream = null;
+      try { stream = v.captureStream ? v.captureStream() : null; } catch (e) { log("Mirror: captureStream failed:", e?.name, e?.message); }
+      if (!stream || !stream.getVideoTracks().length) { log("Mirror: no capturable video track"); return; }
+      const pc = new RTCPeerConnection();
+      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+      await pc.setLocalDescription(await pc.createOffer());
+      await waitIce(pc);
+      const r = await sendMirror({ type: "offer", sdp: pc.localDescription.toJSON(), w: v.videoWidth, h: v.videoHeight });
+      if (!r?.ok || !r.sdp) { pc.close(); log("Mirror: top frame did not answer (extension not running there?)"); return; }
+      await pc.setRemoteDescription(r.sdp);
+      mirror.pc = pc;
+      mirror.source = v;
+      v.addEventListener("play", () => sendMirror({ type: "state", paused: false }));
+      v.addEventListener("pause", () => sendMirror({ type: "state", paused: true }));
+      log(`Mirror started: ${v.videoWidth}x${v.videoHeight}, tracks=${stream.getTracks().map((t) => t.kind).join(",")}`);
+    } catch (e) {
+      log("Mirror: start failed:", e?.name, e?.message);
+    } finally {
+      mirror.pending = false;
+    }
+  }
+
+  // Receiver (top frame)
+  function setMirrorControls(on) {
+    for (const a of ["play", "pause"]) {
+      try {
+        navigator.mediaSession.setActionHandler(a, on ? () => {
+          sendMirror({ type: "control", op: a, toFrame: mirror.fromFrame });
+          navigator.mediaSession.playbackState = a === "play" ? "playing" : "paused";
+        } : null);
+      } catch { }
+    }
+  }
+
+  function stopMirrorReceiver() {
+    if (!mirror.video && !mirror.pc) return;
+    try { if (document.pictureInPictureElement === mirror.video) document.exitPictureInPicture().catch(() => { }); } catch { }
+    try { mirror.pc?.close(); } catch { }
+    mirror.video?.remove();
+    mirror.pc = null;
+    mirror.video = null;
+    mirror.fromFrame = null;
+    setMirrorControls(false);
+    log("Mirror receiver stopped");
+  }
+
+  async function onMirrorOffer(m, respond) {
+    stopMirrorReceiver();
+    try {
+      const pc = new RTCPeerConnection();
+      const v = document.createElement("video");
+      v.setAttribute("data-bap-mirror", "");
+      v.muted = true;
+      v.playsInline = true;
+      v.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none;z-index:-1";
+      pc.ontrack = (e) => {
+        if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
+        v.play().catch((err) => log("Mirror: play failed:", err?.name));
+      };
+      document.documentElement.appendChild(v);
+      await pc.setRemoteDescription(m.sdp);
+      await pc.setLocalDescription(await pc.createAnswer());
+      await waitIce(pc);
+      mirror.pc = pc;
+      mirror.video = v;
+      mirror.fromFrame = m.fromFrame;
+      setMirrorControls(true);
+      registerMediaSessionHandler();
+      log(`Mirror receiving from frame ${m.fromFrame} (${m.w}x${m.h})`);
+      respond({ ok: true, sdp: pc.localDescription.toJSON() });
+    } catch (e) {
+      log("Mirror: answer failed:", e?.name, e?.message);
+      stopMirrorReceiver();
+      respond({ ok: false });
+    }
+  }
+
+  function handleMirrorMessage(m, respond) {
+    if (IS_TOP && m.type === "offer") return onMirrorOffer(m, respond);
+    if (IS_TOP && m.type === "stop" && m.fromFrame === mirror.fromFrame) stopMirrorReceiver();
+    if (IS_TOP && m.type === "state" && m.fromFrame === mirror.fromFrame) {
+      try { navigator.mediaSession.playbackState = m.paused ? "paused" : "playing"; } catch { }
+    }
+    if (!IS_TOP && m.type === "control" && mirror.source) {
+      (m.op === "play" ? mirror.source.play() : Promise.resolve(mirror.source.pause())).catch((e) => log("Mirror control failed:", e?.name));
+    }
+    respond({ ok: true });
+  }
+
+  function setupMirrorSender() {
+    if (IS_TOP) return;
+    document.addEventListener("playing", () => setTimeout(checkMirrorSender, 300), { capture: true, passive: true });
+    setInterval(checkMirrorSender, 3000);
+  }
+
   chrome.runtime.onMessage.addListener((m, s, r) => {
     log(`Message received: action=${m.action}, reason=${m.reason}`);
     if (m.action === "ping") { r({ pong: true }); return false; }
+    if (m.action === "mirror") { handleMirrorMessage(m, r); return true; }
     if (m.action === "tryPiP") {
       loadConfig().then(c => tryEnterPiP(c, m.reason || "background"));
       r({ success: true });
@@ -714,6 +870,7 @@
     state.supportsAutoPiP = checkAutoPiPSupport();
     hookViewportEvents();
     setupVideoObserver();
+    setupMirrorSender();
     initYouTube();
     tick();
     tick();
