@@ -111,3 +111,10 @@ label input[type="number"]{
   color: #999;
   font-family: monospace;
 }
+
+/* Custom sites */
+.add-site-row { display: flex; gap: 8px; margin: 8px 0 4px; }
+.add-site-row input[type="text"] { flex: 1; padding: 6px 8px; }
+.site-error { color: #c5221f; min-height: 1.2em; margin: 2px 0 6px; font-size: 13px; }
+.custom-site-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.25); }
+.custom-site-row .remove-site { margin-left: 12px; }

@@ -1,3 +1,5 @@
+importScripts('customSites.js');   // BAPCustomSites: shared with the options page
+
 const DEFAULTS = {
   enabled: true,
   collapseWidthPx: 8,
@@ -168,9 +170,46 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (LAST_TAB === tabId) LAST_TAB = null;
 });
 
+// ---- Custom sites (user-added): keep registered content scripts in step with storage + granted permissions ----
+const CUSTOM_PREFIX = 'bap-custom-';
+let customSyncChain = Promise.resolve();
+
+async function doSyncCustomSites() {
+  const { customSites } = await chrome.storage.sync.get({ customSites: [] });
+  const wanted = new Map();
+  for (const host of BAPCustomSites.sanitizeList(customSites)) {
+    const matches = BAPCustomSites.toMatchPatterns(host);
+    if (!(await chrome.permissions.contains({ origins: matches }))) continue;      // never register without the user's grant
+    wanted.set(CUSTOM_PREFIX + host, { id: CUSTOM_PREFIX + host, matches, js: ['content.js'], allFrames: true, runAt: 'document_idle', persistAcrossSessions: true });
+  }
+  const existing = (await chrome.scripting.getRegisteredContentScripts()).filter((r) => r.id.startsWith(CUSTOM_PREFIX));
+  const stale = existing.filter((r) => !wanted.has(r.id)).map((r) => r.id);
+  if (stale.length) await chrome.scripting.unregisterContentScripts({ ids: stale });
+  const have = new Set(existing.map((r) => r.id));
+  const toAdd = [...wanted.values()].filter((r) => !have.has(r.id));
+  if (toAdd.length) await chrome.scripting.registerContentScripts(toAdd);
+  log(`Custom sites synced: registered=${[...wanted.keys()].join(',') || '(none)'} removed=${stale.join(',') || '(none)'}`);
+}
+// One at a time, so overlapping triggers (storage change + message + permission event) can't double-register.
+function syncCustomSites() {
+  customSyncChain = customSyncChain.then(doSyncCustomSites, doSyncCustomSites).catch((e) => log('Custom sites sync failed:', e?.message));
+  return customSyncChain;
+}
+syncCustomSites();
+chrome.runtime.onInstalled.addListener(() => syncCustomSites());
+chrome.runtime.onStartup.addListener(() => syncCustomSites());
+chrome.permissions.onAdded.addListener(() => syncCustomSites());
+chrome.permissions.onRemoved.addListener(() => syncCustomSites());
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'sync' && changes.customSites) syncCustomSites(); });
+
 chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
   const tabId = sender.tab?.id;
   log(`Message received: action=${msg.action}, tabId=${tabId}`);
+
+  if (msg.action === "syncCustomSites") {
+    syncCustomSites().then(() => sendRespond({ ok: true }));
+    return true;
+  }
 
   if (msg.action === "isVivaldi") {
     (async () => {

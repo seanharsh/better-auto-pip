@@ -81,6 +81,7 @@
     }
   ],
   "options_page": "options.html",
+  "optional_host_permissions": ["*://*/*"],
   "commands": {
     "trigger-pip": {
       "suggested_key": {

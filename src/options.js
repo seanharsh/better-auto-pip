@@ -8,23 +8,11 @@ const DEFAULTS = {
   siteSettings: {},
   tabSwitchDelay: 500,
   showFloatingButton: true,
-  showBlockAlerts: true
+  showBlockAlerts: true,
+  customSites: []
 };
 
-const PIP_SITES = [
-  "app.plex.tv",
-  "teams.microsoft.com",
-  "meet.google.com",
-  "www.twitch.tv",
-  "player.twitch.tv",
-  "www.netflix.com",
-  "www.espn.com",
-  "www.youtube.com",
-  "www.hulu.com",
-  "vimeo.com",
-  "www.dailymotion.com",
-  "www.crunchyroll.com"
-];
+const PIP_SITES = BAPCustomSites.BUILTIN_HOSTS;
 
 function $(id) { return document.getElementById(id); }
 
@@ -42,6 +30,7 @@ function renderSites(cfg, showPanel) {
   wrap.textContent = ""; // Fast clear
 
   const hosts = new Set(PIP_SITES);
+  for (const h of BAPCustomSites.sanitizeList(cfg.customSites)) hosts.add(h);
   if (cfg.siteSettings) {
     for (const k in cfg.siteSettings) hosts.add(k);
   }
@@ -95,6 +84,67 @@ function renderSites(cfg, showPanel) {
   wrap.appendChild(frag);
 }
 
+const SITE_ERRORS = {
+  invalid: "That doesn't look like a website. Enter a name like example.com or paste a page address.",
+  duplicate: "That site is already in your list.",
+  builtin: "That site is already supported, no need to add it.",
+  limit: `You can add up to ${BAPCustomSites.MAX_CUSTOM_SITES} custom sites.`
+};
+
+function renderCustomSites(list) {
+  const wrap = $("customSites");
+  wrap.textContent = "";
+  for (const host of BAPCustomSites.sanitizeList(list)) {
+    const row = document.createElement("div");
+    row.className = "custom-site-row";
+    row.dataset.customSite = host;
+    const name = document.createElement("span");
+    name.textContent = host;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "remove-site";
+    btn.textContent = "Remove";
+    btn.addEventListener("click", () => removeSite(host));
+    row.append(name, btn);
+    wrap.appendChild(row);
+  }
+}
+
+async function syncBackground() {
+  try { await chrome.runtime.sendMessage({ action: "syncCustomSites" }); } catch { /* worker will sync on its own events */ }
+}
+
+async function addSite() {
+  const err = $("customSiteError");
+  err.textContent = "";
+  const { customSites } = await chrome.storage.sync.get({ customSites: [] });
+  const r = BAPCustomSites.addCustomSite(BAPCustomSites.sanitizeList(customSites), $("customSiteInput").value);
+  if (!r.ok) { err.textContent = SITE_ERRORS[r.error] || SITE_ERRORS.invalid; return; }
+  let granted = false;
+  try {
+    // Needs a user gesture (this runs from the button click). Shows the browser's own permission prompt.
+    granted = await chrome.permissions.request({ origins: BAPCustomSites.toMatchPatterns(r.host) });
+  } catch (e) {
+    err.textContent = "Couldn't ask for permission: " + (e && e.message ? e.message : e);
+    return;
+  }
+  if (!granted) { err.textContent = "Access wasn't allowed, so the site wasn't added."; return; }
+  await chrome.storage.sync.set({ customSites: r.list });
+  await syncBackground();
+  $("customSiteInput").value = "";
+  await load();
+}
+
+async function removeSite(host) {
+  const { customSites, siteSettings } = await chrome.storage.sync.get({ customSites: [], siteSettings: {} });
+  const settings = { ...siteSettings };
+  delete settings[host];
+  await chrome.storage.sync.set({ customSites: BAPCustomSites.removeCustomSite(BAPCustomSites.sanitizeList(customSites), host), siteSettings: settings });
+  try { await chrome.permissions.remove({ origins: BAPCustomSites.toMatchPatterns(host) }); } catch { /* built-in grants can't be removed */ }
+  await syncBackground();
+  await load();
+}
+
 async function load() {
   const cfg = await chrome.storage.sync.get(DEFAULTS);
   const isV = await isVivaldi();
@@ -112,6 +162,7 @@ async function load() {
   const ps = $("panelSection");
   if (ps) ps.style.display = isV ? "block" : "none";
 
+  renderCustomSites(cfg.customSites);
   renderSites(cfg, isV);
 }
 
@@ -166,6 +217,9 @@ document.addEventListener("input", (e) => {
   const t = e.target;
   if (t.tagName === "INPUT" && (t.type === "number" || t.type === "text")) debouncedSave();
 });
+
+$("addSiteButton").addEventListener("click", addSite);
+$("customSiteInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSite(); } });
 
 load();
 

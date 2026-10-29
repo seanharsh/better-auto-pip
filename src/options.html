@@ -74,9 +74,21 @@
     </div>
   </div>
 
+  <h2>Custom Sites</h2>
+  <p class="hint">Better Auto PiP only runs on the sites in the table below. To use it on another site, add it here and
+    allow access when your browser asks. If the video plays in an embedded player from a different website, add that
+    website as well.</p>
+
+  <div class="add-site-row">
+    <input type="text" id="customSiteInput" placeholder="example.com or paste a page address" autocomplete="off"
+      spellcheck="false" />
+    <button type="button" id="addSiteButton">Add site</button>
+  </div>
+  <div id="customSiteError" class="site-error" role="alert"></div>
+  <div id="customSites"></div>
+
   <h2>Per-Site Settings</h2>
-  <p class="hint">Configure PiP behavior for supported sites. Additional sites will appear automatically when visited.
-  </p>
+  <p class="hint">Configure PiP behavior for each site. Sites you add above appear here automatically.</p>
 
   <div id="sites"></div>
 
@@ -94,6 +106,7 @@
     </p>
   </footer>
 
+  <script src="customSites.js"></script>
   <script src="options.js"></script>
 </body>
 

@@ -9,6 +9,7 @@ Automatically enable Picture-in-Picture for videos when switching tabs or collap
 - **Tab Switching**: Automatically enters PiP when you switch away from a video tab
 - **Vivaldi Panel Collapse**: Enters PiP when you collapse a Vivaldi panel containing a video
 - **Per-Site Controls**: Enable/disable features for specific websites
+- **Custom Sites**: Add any other website yourself (Options → Custom Sites); your browser asks you to allow access to each site
 - **Customizable**: Adjust timing, delays, and behavior to your preferences
 
 ## Supported Sites
@@ -24,6 +25,8 @@ Automatically enable Picture-in-Picture for videos when switching tabs or collap
 - ESPN
 - Microsoft Teams
 - Google Meet
+
+Not on the list? Open the extension's **Options**, enter the site under **Custom Sites** and click **Add site**. Your browser will ask you to allow access to that site. If the video plays in an embedded player from a different website, add that website as well.
 
 ## Installation
 
@@ -53,6 +56,7 @@ Access settings by clicking the extension icon or right-clicking and selecting "
 - Configure panel collapse detection (Vivaldi only)
 - Adjust tab switch delay
 - Per-site enable/disable controls
+- Add or remove custom sites (each site is allowed separately; removing a site also revokes its access)
 
 ## Vivaldi Panel Auto-PiP (Keyboard Shortcut Setup)
 
