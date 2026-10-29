@@ -125,6 +125,7 @@
       navigator.mediaSession.setActionHandler("enterpictureinpicture", async () => {
         log("MediaSession enterpictureinpicture action triggered");
         state.autoPiPCalledThisHide = true;
+        state.pendingSetupPrompt = false; // the browser's auto-PiP is working; it may call us after our own attempt already failed
         const currentCfg = await loadConfig();
         if (!currentCfg.enabled || !isSiteEnabled(currentCfg, "tab")) {
           log("MediaSession PiP ignored: disabled");
@@ -696,8 +697,9 @@
     }
     if (curr === "visible" && prev === "hidden") {
       log("Tab visible again");
+      const pipWasOpen = !!document.pictureInPictureElement || state.isInPiP;
       if (cfg.exitOnExpand) await maybeExitPiP(cfg);
-      if (state.pendingSetupPrompt) showSetupPrompt(cfg);
+      if (state.pendingSetupPrompt && !state.autoPiPCalledThisHide && !pipWasOpen) showSetupPrompt(cfg);
       // Reset here, not on hide: the browser may call the PiP handler before this frame sees visibilitychange.
       state.pendingSetupPrompt = false;
       state.autoPiPCalledThisHide = false;
