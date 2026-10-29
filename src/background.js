@@ -217,4 +217,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
   return false;
 });
 
+if (chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener((command, tab) => {
+    if (command !== "trigger-pip") return;
+    const tabId = tab?.id;
+    if (!tabId) {
+      log("trigger-pip command received but no tab id");
+      return;
+    }
+    log(`trigger-pip command on tab ${tabId}`);
+    chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        const videos = Array.from(document.querySelectorAll("video"));
+        let best = null;
+        let bestArea = 0;
+        for (const v of videos) {
+          if (!v.isConnected) continue;
+          try {
+            if (v.paused || v.ended || v.readyState < 2) continue;
+            const r = v.getBoundingClientRect();
+            const area = r.width * r.height;
+            if (area > bestArea) { bestArea = area; best = v; }
+          } catch { }
+        }
+        if (!best && videos.length) best = videos[0];
+        if (!best) return { ok: false, reason: "no-video" };
+        if (document.pictureInPictureElement) {
+          document.exitPictureInPicture().catch(() => { });
+          return { ok: true, action: "exit" };
+        }
+        return best.requestPictureInPicture()
+          .then(() => ({ ok: true, action: "enter" }))
+          .catch((e) => ({ ok: false, reason: e?.name || "unknown", message: e?.message }));
+      }
+    }).then((results) => {
+      log("trigger-pip executeScript results:", JSON.stringify(results?.map(r => r.result)));
+    }).catch((e) => {
+      log("trigger-pip executeScript failed:", e?.message);
+    });
+  });
+}
+
 log("Background service worker initialized");

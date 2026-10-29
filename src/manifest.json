@@ -80,5 +80,14 @@
       "all_frames": true
     }
   ],
-  "options_page": "options.html"
+  "options_page": "options.html",
+  "commands": {
+    "trigger-pip": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "Trigger Picture-in-Picture on the active video (pair with Vivaldi's Toggle Panel shortcut for panel auto-PiP)"
+    }
+  }
 }

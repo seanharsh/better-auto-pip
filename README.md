@@ -54,6 +54,22 @@ Access settings by clicking the extension icon or right-clicking and selecting "
 - Adjust tab switch delay
 - Per-site enable/disable controls
 
+## Vivaldi Panel Auto-PiP (Keyboard Shortcut Setup)
+
+Because of a Chromium restriction, web panels cannot enter Picture-in-Picture automatically on collapse without a user gesture. The extension provides a keyboard command that bypasses this when paired with Vivaldi's panel toggle shortcut:
+
+1. Open `chrome://extensions/shortcuts` and set a shortcut (default `Ctrl+Shift+P` / `Cmd+Shift+P`) for **Better Auto PiP → Trigger Picture-in-Picture**.
+2. In Vivaldi, open **Settings → Keyboard → View** and bind the **same** shortcut to **Toggle Web Panel**.
+3. Pressing the shortcut now collapses the panel *and* triggers PiP in a single keypress.
+
+## Notes on Chrome's Built-in Auto-PiP
+
+Chrome 134+ has a built-in auto-PiP feature driven by the Media Session API. When enabled, Chrome may enter PiP on tab switches *before* this extension's code runs. Consequences:
+
+- The **Tab Switch Delay** setting only applies when the extension drives PiP. If Chrome's native auto-PiP fires first, PiP appears instantly regardless of your delay.
+- If you've disabled the extension for a site but PiP still activates, it's Chrome's native behavior. The extension will detect this and **auto-exit PiP** for sites where it's been disabled.
+- To disable Chrome's built-in auto-PiP entirely, visit `chrome://flags` and toggle off **Auto picture in picture for video playback**.
+
 ## License
 
 MIT License - See LICENSE file for details

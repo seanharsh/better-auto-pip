@@ -44,6 +44,7 @@
   }
 
   function isVivaldi() {
+    if (cachedVivaldi && typeof cachedVivaldi.isVivaldi === "boolean") return cachedVivaldi.isVivaldi;
     return !!(window.vivaldi) || navigator.userAgent.includes("Vivaldi") || (navigator.vendor && navigator.vendor.includes("Vivaldi"));
   }
 
@@ -581,7 +582,19 @@
       }, 500);
     }
     document.addEventListener("visibilitychange", handleVisibilityChange, { passive: true });
-    document.addEventListener("enterpictureinpicture", () => state.isInPiP = true, { passive: true });
+    document.addEventListener("enterpictureinpicture", async () => {
+      state.isInPiP = true;
+      try {
+        const cfg = await loadConfig();
+        const hidden = document.visibilityState === "hidden";
+        const context = hidden ? "tab" : "panel";
+        const allowed = cfg.enabled && isSiteEnabled(cfg, context);
+        if (!allowed) {
+          log(`Auto-exiting PiP: extension disabled for ${context} on this site`);
+          try { await document.exitPictureInPicture(); } catch (e) { log("exitPictureInPicture failed:", e?.message); }
+        }
+      } catch { }
+    }, { passive: true });
     document.addEventListener("leavepictureinpicture", () => state.isInPiP = false, { passive: true });
   }
 
@@ -678,6 +691,7 @@
 
   (async function init() {
     log(`Content script initialized on ${location.host}`);
+    await getVivaldiData().catch(() => { });
     log(`Vivaldi: ${isVivaldi()}, supportsAutoPiP: ${checkAutoPiPSupport()}`);
     state.supportsAutoPiP = checkAutoPiPSupport();
     hookViewportEvents();
