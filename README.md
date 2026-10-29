@@ -9,6 +9,7 @@ Automatically enable Picture-in-Picture for videos when switching tabs or collap
 - **Tab Switching**: Automatically enters PiP when you switch away from a video tab
 - **Vivaldi Panel Collapse**: Enters PiP when you collapse a Vivaldi panel containing a video
 - **Per-Site Controls**: Enable/disable features for specific websites
+- **Custom Sites**: Add any other website yourself (Options → Custom Sites); your browser asks you to allow access to each site
 - **Customizable**: Adjust timing, delays, and behavior to your preferences
 
 ## Supported Sites
@@ -25,10 +26,18 @@ Automatically enable Picture-in-Picture for videos when switching tabs or collap
 - Microsoft Teams
 - Google Meet
 
+Not on the list? Open the extension's **Options**, enter the site under **Custom Sites** and click **Add site**. Your browser will ask you to allow access to that site. If the video plays in an embedded player from a different website, add that website as well.
+
+Prefer not to add sites one by one? Turn on **Allow on all sites** in Options. Your browser asks once for access to all websites, and you can turn it off at any time. With it on, automatic Picture-in-Picture works on every site, including videos inside embedded players (an iframe from another website).
+
+### Allowing automatic Picture-in-Picture for a site
+
+Your browser only pops a video out by itself on sites you watch often or have allowed, and extensions can't change that setting. If Better Auto PiP shows **"Automatic Picture-in-Picture is off for (site)"** when you come back to a tab, click **Allow for this site** and set **Automatic picture-in-picture** to **Allow** on the settings page that opens. You only need to do this once per site. Click **Don't ask again** to stop the message for that site. Until then, the **Trigger Picture-in-Picture** shortcut (Cmd+Shift+P / Ctrl+Shift+P by default) works at any time while a video is playing.
+
 ## Installation
 
 ### From Chrome Web Store
-[Link will be added after publication]
+[Better Auto PiP on Chrome Web Store](https://chromewebstore.google.com/detail/better-auto-pip/fhlnhgbimopgpeemkifjgeepoinamikl)
 
 ### Manual Installation (Development)
 1. Clone or download this repository
@@ -53,6 +62,24 @@ Access settings by clicking the extension icon or right-clicking and selecting "
 - Configure panel collapse detection (Vivaldi only)
 - Adjust tab switch delay
 - Per-site enable/disable controls
+- Add or remove custom sites (each site is allowed separately; removing a site also revokes its access)
+- Allow on all sites (optional, off by default)
+
+## Vivaldi Panel Auto-PiP (Keyboard Shortcut Setup)
+
+Because of a Chromium restriction, web panels cannot enter Picture-in-Picture automatically on collapse without a user gesture. The extension provides a keyboard command that bypasses this when paired with Vivaldi's panel toggle shortcut:
+
+1. Open `chrome://extensions/shortcuts` and set a shortcut (default `Ctrl+Shift+P` / `Cmd+Shift+P`) for **Better Auto PiP → Trigger Picture-in-Picture**.
+2. In Vivaldi, open **Settings → Keyboard → View** and bind the **same** shortcut to **Toggle Web Panel**.
+3. Pressing the shortcut now collapses the panel *and* triggers PiP in a single keypress.
+
+## Notes on Chrome's Built-in Auto-PiP
+
+Chrome 134+ has a built-in auto-PiP feature driven by the Media Session API. When enabled, Chrome may enter PiP on tab switches *before* this extension's code runs. Consequences:
+
+- The **Tab Switch Delay** setting only applies when the extension drives PiP. If Chrome's native auto-PiP fires first, PiP appears instantly regardless of your delay.
+- If you've disabled the extension for a site but PiP still activates, it's Chrome's native behavior. The extension will detect this and **auto-exit PiP** for sites where it's been disabled.
+- To disable Chrome's built-in auto-PiP entirely, visit `chrome://flags` and toggle off **Auto picture in picture for video playback**.
 
 ## License
 

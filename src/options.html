@@ -1,10 +1,12 @@
 <!doctype html>
 <html>
+
 <head>
   <meta charset="utf-8" />
   <title>Better Auto PiP - Options</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
+
 <body>
   <h1>Better Auto PiP</h1>
 
@@ -31,7 +33,18 @@
     <input type="checkbox" id="exitOnExpand" />
     <span>Exit PiP when returning to tab/panel</span>
   </label>
-  <div class="hint" style="margin-left: 30px; margin-top: -4px;">When enabled, video returns to the tab when you switch back or expand the panel.</div>
+  <div class="hint" style="margin-left: 30px; margin-top: -4px;">When enabled, video returns to the tab when you switch
+    back or expand the panel.</div>
+
+  <label class="row">
+    <input type="checkbox" id="showFloatingButton" />
+    <span>Show on-screen "Auto PiP" button</span>
+  </label>
+
+  <label class="row">
+    <input type="checkbox" id="showBlockAlerts" />
+    <span>Show notification when PiP is blocked</span>
+  </label>
 
   <h2>Settings</h2>
 
@@ -61,13 +74,36 @@
     </div>
   </div>
 
+  <h2>All Sites</h2>
+  <label class="row">
+    <input type="checkbox" id="allSitesToggle" />
+    <span>Allow Better Auto PiP on all sites</span>
+  </label>
+  <div class="hint" style="margin-left: 30px; margin-top: -4px;">Runs the extension on every website you visit, so automatic Picture-in-Picture and the
+    keyboard shortcut work everywhere, including video players embedded from other sites. Your browser will ask you to allow access to all
+    websites. Turn this off at any time to take that access back. Nothing is collected or sent anywhere.</div>
+  <div id="allSitesError" class="site-error" role="alert"></div>
+
+  <h2>Custom Sites</h2>
+  <p class="hint">Better Auto PiP only runs on the sites in the table below. To use it on another site, add it here and
+    allow access when your browser asks. If the video plays in an embedded player from a different website, add that
+    website as well.</p>
+
+  <div class="add-site-row">
+    <input type="text" id="customSiteInput" placeholder="example.com or paste a page address" autocomplete="off"
+      spellcheck="false" />
+    <button type="button" id="addSiteButton">Add site</button>
+  </div>
+  <div id="customSiteError" class="site-error" role="alert"></div>
+  <div id="customSites"></div>
+
   <h2>Per-Site Settings</h2>
-  <p class="hint">Configure PiP behavior for supported sites. Additional sites will appear automatically when visited.</p>
+  <p class="hint">Configure PiP behavior for each site. Sites you add above appear here automatically.</p>
 
   <div id="sites"></div>
 
   <div class="actions">
-    <button id="save">Save</button>
+
     <span id="status"></span>
   </div>
 
@@ -76,10 +112,12 @@
     <p class="footer-links">
       <a href="https://github.com/seanharsh/Better-Auto-PiP" target="_blank" rel="noopener noreferrer">GitHub</a>
       <span class="separator">•</span>
-      <span class="version">v0.1.0</span>
+      <span class="version">v0.2.1</span>
     </p>
   </footer>
 
+  <script src="customSites.js"></script>
   <script src="options.js"></script>
 </body>
+
 </html>

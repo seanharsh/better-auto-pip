@@ -5,106 +5,176 @@ const DEFAULTS = {
   debounceMs: 250,
   armMinutes: 10,
   exitOnExpand: true,
-  siteSettings: {}, // Stores {enableTab, enablePanel} per site
-  tabSwitchDelay: 500
+  siteSettings: {},
+  tabSwitchDelay: 500,
+  showFloatingButton: true,
+  showBlockAlerts: true,
+  customSites: [],
+  allSites: false
 };
 
-const PIP_SITES = [
-  "app.plex.tv",
-  "teams.microsoft.com",
-  "meet.google.com",
-  "www.twitch.tv",
-  "player.twitch.tv",
-  "www.netflix.com",
-  "www.espn.com",
-  "www.youtube.com",
-  "www.hulu.com",
-  "vimeo.com",
-  "www.dailymotion.com",
-  "www.crunchyroll.com"
-];
+const PIP_SITES = BAPCustomSites.BUILTIN_HOSTS;
 
 function $(id) { return document.getElementById(id); }
 
 async function isVivaldi() {
-  // Ask the background script for Vivaldi detection status
   try {
-    const response = await chrome.runtime.sendMessage({ action: "isVivaldi" });
-    return response?.isVivaldi || false;
-  } catch (e) {
-    console.error("Error detecting Vivaldi:", e);
+    const res = await chrome.runtime.sendMessage({ action: "isVivaldi" });
+    return res && res.isVivaldi;
+  } catch {
     return false;
   }
 }
 
-function renderSites(cfg, showPanelColumn) {
+function renderSites(cfg, showPanel) {
   const wrap = $("sites");
-  wrap.innerHTML = "";
+  wrap.textContent = ""; // Fast clear
 
-  const hosts = new Set([...PIP_SITES, ...Object.keys(cfg.siteSettings || {})]);
-
-  // Create table header
-  const table = document.createElement("table");
-  table.className = "site-table";
-  const thead = document.createElement("thead");
-
-  let headerHTML = `
-    <tr>
-      <th>Site</th>
-      <th>Tab Switching</th>`;
-
-  if (showPanelColumn) {
-    headerHTML += `<th class="panel-column">Panel Collapse</th>`;
+  const hosts = new Set(PIP_SITES);
+  for (const h of BAPCustomSites.sanitizeList(cfg.customSites)) hosts.add(h);
+  if (cfg.siteSettings) {
+    for (const k in cfg.siteSettings) hosts.add(k);
   }
 
-  headerHTML += `</tr>`;
-  thead.innerHTML = headerHTML;
+  const frag = document.createDocumentFragment();
+  const table = document.createElement("table");
+  table.className = "site-table";
+
+  const thead = document.createElement("thead");
+  // Use simple string concat for static header
+  thead.innerHTML = `<tr><th>Site</th><th>Tab Switching</th>${showPanel ? '<th class="panel-column">Panel Collapse</th>' : ''}</tr>`;
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
 
   for (const host of hosts) {
-    const settings = (cfg.siteSettings && cfg.siteSettings[host]) || { enableTab: true, enablePanel: true };
-
+    const s = (cfg.siteSettings && cfg.siteSettings[host]) || { enableTab: true, enablePanel: true };
     const row = document.createElement("tr");
 
-    // Site name
     const tdSite = document.createElement("td");
     tdSite.textContent = host;
     row.appendChild(tdSite);
 
-    // Tab switching checkbox
+    // Tab
     const tdTab = document.createElement("td");
     const cbTab = document.createElement("input");
     cbTab.type = "checkbox";
-    cbTab.dataset.host = host;
-    cbTab.dataset.setting = "tab";
-    cbTab.checked = settings.enableTab !== false;
+    cbTab.dataset.h = host; // Short attr
+    cbTab.dataset.s = "t";  // t = tab
+    cbTab.checked = s.enableTab !== false;
     tdTab.appendChild(cbTab);
     row.appendChild(tdTab);
 
-    // Panel collapse checkbox (only if Vivaldi)
-    if (showPanelColumn) {
+    // Panel
+    if (showPanel) {
       const tdPanel = document.createElement("td");
       tdPanel.className = "panel-column";
       const cbPanel = document.createElement("input");
       cbPanel.type = "checkbox";
-      cbPanel.dataset.host = host;
-      cbPanel.dataset.setting = "panel";
-      cbPanel.checked = settings.enablePanel !== false;
+      cbPanel.dataset.h = host;
+      cbPanel.dataset.s = "p"; // p = panel
+      cbPanel.checked = s.enablePanel !== false;
       tdPanel.appendChild(cbPanel);
       row.appendChild(tdPanel);
     }
-
     tbody.appendChild(row);
   }
 
   table.appendChild(tbody);
-  wrap.appendChild(table);
+  frag.appendChild(table);
+  wrap.appendChild(frag);
+}
+
+const SITE_ERRORS = {
+  invalid: "That doesn't look like a website. Enter a name like example.com or paste a page address.",
+  duplicate: "That site is already in your list.",
+  builtin: "That site is already supported, no need to add it.",
+  limit: `You can add up to ${BAPCustomSites.MAX_CUSTOM_SITES} custom sites.`
+};
+
+function renderCustomSites(list) {
+  const wrap = $("customSites");
+  wrap.textContent = "";
+  for (const host of BAPCustomSites.sanitizeList(list)) {
+    const row = document.createElement("div");
+    row.className = "custom-site-row";
+    row.dataset.customSite = host;
+    const name = document.createElement("span");
+    name.textContent = host;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "remove-site";
+    btn.textContent = "Remove";
+    btn.addEventListener("click", () => removeSite(host));
+    row.append(name, btn);
+    wrap.appendChild(row);
+  }
+}
+
+async function syncBackground() {
+  try { await chrome.runtime.sendMessage({ action: "syncCustomSites" }); } catch { /* worker will sync on its own events */ }
+}
+
+async function addSite() {
+  const err = $("customSiteError");
+  err.textContent = "";
+  const { customSites } = await chrome.storage.sync.get({ customSites: [] });
+  const r = BAPCustomSites.addCustomSite(BAPCustomSites.sanitizeList(customSites), $("customSiteInput").value);
+  if (!r.ok) { err.textContent = SITE_ERRORS[r.error] || SITE_ERRORS.invalid; return; }
+  let granted = false;
+  try {
+    // Needs a user gesture (this runs from the button click). Shows the browser's own permission prompt.
+    granted = await chrome.permissions.request({ origins: BAPCustomSites.toMatchPatterns(r.host) });
+  } catch (e) {
+    err.textContent = "Couldn't ask for permission: " + (e && e.message ? e.message : e);
+    return;
+  }
+  if (!granted) { err.textContent = "Access wasn't allowed, so the site wasn't added."; return; }
+  await chrome.storage.sync.set({ customSites: r.list });
+  await syncBackground();
+  $("customSiteInput").value = "";
+  await load();
+}
+
+async function removeSite(host) {
+  const { customSites, siteSettings } = await chrome.storage.sync.get({ customSites: [], siteSettings: {} });
+  const settings = { ...siteSettings };
+  delete settings[host];
+  await chrome.storage.sync.set({ customSites: BAPCustomSites.removeCustomSite(BAPCustomSites.sanitizeList(customSites), host), siteSettings: settings });
+  try { await chrome.permissions.remove({ origins: BAPCustomSites.toMatchPatterns(host) }); } catch { /* built-in grants can't be removed */ }
+  await syncBackground();
+  await load();
+}
+
+async function allSitesGranted() {
+  try { return await chrome.permissions.contains({ origins: [BAPCustomSites.ALL_SITES_PATTERN] }); } catch { return false; }
+}
+
+async function setAllSites(on) {
+  const box = $("allSitesToggle"), err = $("allSitesError");
+  err.textContent = "";
+  if (on) {
+    let granted = false;
+    try {
+      // Needs a user gesture (this runs from the checkbox click). Shows the browser's own permission prompt.
+      granted = await chrome.permissions.request({ origins: [BAPCustomSites.ALL_SITES_PATTERN] });
+    } catch (e) {
+      box.checked = false;
+      err.textContent = "Couldn't ask for permission: " + (e && e.message ? e.message : e);
+      return;
+    }
+    if (!granted) { box.checked = false; err.textContent = "Access wasn't allowed, so all-sites mode was not turned on."; return; }
+    await chrome.storage.sync.set({ allSites: true });
+  } else {
+    await chrome.storage.sync.set({ allSites: false });
+    try { await chrome.permissions.remove({ origins: [BAPCustomSites.ALL_SITES_PATTERN] }); } catch { /* can't be removed if it came with the install */ }
+  }
+  await syncBackground();
 }
 
 async function load() {
   const cfg = await chrome.storage.sync.get(DEFAULTS);
+  const isV = await isVivaldi();
 
   $("enabled").checked = !!cfg.enabled;
   $("collapseWidthPx").value = cfg.collapseWidthPx;
@@ -112,51 +182,73 @@ async function load() {
   $("debounceMs").value = cfg.debounceMs;
   $("armMinutes").value = cfg.armMinutes;
   $("exitOnExpand").checked = !!cfg.exitOnExpand;
+  $("showFloatingButton").checked = cfg.showFloatingButton !== false;
+  $("showBlockAlerts").checked = cfg.showBlockAlerts !== false;
   $("tabSwitchDelay").value = cfg.tabSwitchDelay;
 
-  // Detect Vivaldi and hide/show panel options accordingly
-  const vivaldiDetected = await isVivaldi();
-  const panelSection = $("panelSection");
-  if (panelSection) {
-    panelSection.style.display = vivaldiDetected ? "block" : "none";
-  }
+  const ps = $("panelSection");
+  if (ps) ps.style.display = isV ? "block" : "none";
 
-  renderSites(cfg, vivaldiDetected);
+  $("allSitesToggle").checked = cfg.allSites === true && (await allSitesGranted());   // shows OFF if the permission was revoked elsewhere
+  renderCustomSites(cfg.customSites);
+  renderSites(cfg, isV);
 }
 
-async function save() {
+const save = async () => {
   const cfg = {
     enabled: $("enabled").checked,
-    collapseWidthPx: Number($("collapseWidthPx").value),
-    collapseHeightPx: Number($("collapseHeightPx").value),
-    debounceMs: Number($("debounceMs").value),
-    armMinutes: Number($("armMinutes").value),
+    collapseWidthPx: +$("collapseWidthPx").value,
+    collapseHeightPx: +$("collapseHeightPx").value,
+    debounceMs: +$("debounceMs").value,
+    armMinutes: +$("armMinutes").value,
     exitOnExpand: $("exitOnExpand").checked,
-    tabSwitchDelay: Number($("tabSwitchDelay").value),
+    showFloatingButton: $("showFloatingButton").checked,
+    showBlockAlerts: $("showBlockAlerts").checked,
+    tabSwitchDelay: +$("tabSwitchDelay").value,
     siteSettings: {}
   };
 
-  // Collect per-site settings
-  const hosts = new Set();
-  for (const input of document.querySelectorAll("input[data-host]")) {
-    hosts.add(input.dataset.host);
-  }
+  // Efficient O(N) gather
+  // Use getElementsByTagName for speed vs querySelectorAll
+  const inputs = $("sites").getElementsByTagName("input");
+  for (let i = 0, l = inputs.length; i < l; i++) {
+    const el = inputs[i];
+    const h = el.dataset.h;
+    const s = el.dataset.s;
+    if (!h) continue;
 
-  for (const host of hosts) {
-    const tabCheckbox = document.querySelector(`input[data-host="${host}"][data-setting="tab"]`);
-    const panelCheckbox = document.querySelector(`input[data-host="${host}"][data-setting="panel"]`);
+    // Ensure object exists
+    if (!cfg.siteSettings[h]) cfg.siteSettings[h] = { enableTab: true, enablePanel: true };
 
-    cfg.siteSettings[host] = {
-      enableTab: tabCheckbox ? tabCheckbox.checked : true,
-      enablePanel: panelCheckbox ? panelCheckbox.checked : true
-    };
+    if (s === "t") cfg.siteSettings[h].enableTab = el.checked;
+    else if (s === "p") cfg.siteSettings[h].enablePanel = el.checked;
   }
 
   await chrome.storage.sync.set(cfg);
 
-  $("status").textContent = "Saved.";
-  setTimeout(() => ($("status").textContent = ""), 1200);
-}
+  const st = $("status");
+  st.textContent = "Saved.";
+  setTimeout(() => st.textContent = "", 1200);
+};
 
-$("save").addEventListener("click", save);
+let timer;
+const debouncedSave = () => {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(save, 500);
+};
+
+// Event Delegation (Single listener)
+document.addEventListener("change", (e) => {
+  if (e.target.tagName === "INPUT") debouncedSave();
+});
+document.addEventListener("input", (e) => {
+  const t = e.target;
+  if (t.tagName === "INPUT" && (t.type === "number" || t.type === "text")) debouncedSave();
+});
+
+$("allSitesToggle").addEventListener("change", (e) => setAllSites(e.target.checked));
+$("addSiteButton").addEventListener("click", addSite);
+$("customSiteInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSite(); } });
+
 load();
+
