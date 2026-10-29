@@ -201,7 +201,17 @@ function syncCustomSites() {
   return customSyncChain;
 }
 syncCustomSites();
-chrome.runtime.onInstalled.addListener(() => syncCustomSites());
+// Tabs already open when the extension is installed, updated or reloaded keep the old content script, which is cut off from the
+// extension, so PiP would not work there until the page is refreshed. Put the current one into every frame we have access to.
+async function injectIntoOpenTabs() {
+  const tabs = await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] });
+  const res = await Promise.all(tabs.map((t) => chrome.scripting.executeScript({ target: { tabId: t.id, allFrames: true }, files: ["content.js"] }).then(() => 1, () => 0)));
+  log(`Injected the content script into ${res.reduce((a, b) => a + b, 0)} of ${tabs.length} open tab(s)`);
+}
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  syncCustomSites();
+  if (reason === "install" || reason === "update") injectIntoOpenTabs().catch((e) => log("Injecting into open tabs failed:", e?.message));
+});
 chrome.runtime.onStartup.addListener(() => syncCustomSites());
 chrome.permissions.onAdded.addListener(() => syncCustomSites());
 chrome.permissions.onRemoved.addListener(() => syncCustomSites());

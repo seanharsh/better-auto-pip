@@ -1,4 +1,14 @@
 (() => {
+  // One live copy per frame. The background also injects this file into tabs that were open when the extension was installed,
+  // updated or reloaded, so a page can get a second copy; copies from before a reload are cut off from the extension (runtime.id gone).
+  try { if (globalThis.__betterAutoPiPLive?.()) return; } catch { }
+  const RUNTIME = chrome.runtime;
+  globalThis.__betterAutoPiPLive = () => { try { return !!RUNTIME.id; } catch { return false; } };
+  const replacedOld = !!document.querySelector(".betterautopip-floating-toggle, .betterautopip-banner, .betterautopip-toast, #betterautopip-style, video[data-bap-mirror]");
+  // Anything left on the page now belongs to a cut-off copy: remove it (the old styles too, so this version's styles go in).
+  document.querySelectorAll(".betterautopip-floating-toggle, .betterautopip-banner, .betterautopip-toast, #betterautopip-style").forEach((el) => el.remove());
+  document.querySelectorAll("video[data-bap-mirror]").forEach((v) => { try { v.srcObject?.getTracks().forEach((t) => t.stop()); } catch { } v.remove(); });
+
   const DEFAULTS = {
     enabled: true,
     collapseWidthPx: 8,
@@ -901,7 +911,7 @@
   }
 
   (async function init() {
-    log(`Content script initialized on ${location.host}`);
+    log(`Content script initialized on ${location.host}${replacedOld ? " (replaced a copy from before the extension reloaded)" : ""}`);
     await getVivaldiData().catch(() => { });
     log(`Vivaldi: ${isVivaldi()}, supportsAutoPiP: ${checkAutoPiPSupport()}`);
     state.supportsAutoPiP = checkAutoPiPSupport();
