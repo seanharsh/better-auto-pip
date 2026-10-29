@@ -216,6 +216,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
     return true;
   }
 
+  // Setup prompt: open the browser's site settings for the sending tab's site (its own URL, never one from the message),
+  // where the user can set "Automatic picture-in-picture" to Allow. Extensions cannot change that setting themselves.
+  if (msg.action === "openAutoPipSettings") {
+    let origin = null;
+    try { const u = new URL(sender.tab?.url || ""); if (u.protocol === "https:" || u.protocol === "http:") origin = u.origin; } catch { }
+    if (!origin) return false;
+    const url = `chrome://settings/content/siteDetails?site=${encodeURIComponent(origin)}`;
+    // Vivaldi ignores the url given to tabs.create (the tab stays blank) but honours tabs.update, so set it again.
+    chrome.tabs.create({ url, index: (sender.tab.index ?? 0) + 1, openerTabId: tabId })
+      .then((t) => chrome.tabs.update(t.id, { url }))
+      .then(() => log(`Opened site settings for ${origin}`), (e) => log(`Could not open site settings: ${e?.message}`));
+    return false;
+  }
+
   // Mirror signalling between an embedded player frame and the top frame of the same tab (see content.js "Mirror").
   if (msg.action === "mirror") {
     if (!tabId) return false;

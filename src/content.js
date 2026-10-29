@@ -9,7 +9,8 @@
     siteSettings: {},
     tabSwitchDelay: 500,
     showFloatingButton: true,
-    showBlockAlerts: true
+    showBlockAlerts: true,
+    autoPipPromptOff: {}
   };
 
   const state = {
@@ -26,6 +27,8 @@
     tabSwitchFailCount: 0,
     lastUserInteraction: 0,
     mediaSessionHandlerRegistered: false,
+    autoPiPCalledThisHide: false,
+    pendingSetupPrompt: false,
     supportsAutoPiP: false,
     cachedVideos: null,
     cachedVideosTs: 0,
@@ -111,6 +114,7 @@
 
       navigator.mediaSession.setActionHandler("enterpictureinpicture", async () => {
         log("MediaSession enterpictureinpicture action triggered");
+        state.autoPiPCalledThisHide = true;
         const currentCfg = await loadConfig();
         if (!currentCfg.enabled || !isSiteEnabled(currentCfg, "tab")) {
           log("MediaSession PiP ignored: disabled");
@@ -363,7 +367,14 @@
     } catch (e) {
       log(`PiP request failed: ${e?.name} - ${e?.message}`);
       if (e?.name === "NotAllowedError" || e?.message?.includes("gesture")) {
-        if (reason === "tabSwitch") {
+        if (reason === "tabSwitch" && IS_TOP && state.mediaSessionHandlerRegistered && !state.autoPiPCalledThisHide) {
+          // The browser had our handler and did not call it: its auto-PiP is held back for this site (not enough watch
+          // history and no "Automatic picture-in-picture: Allow"). Clicking the page would not help; explain the setting on return.
+          if (cfg.showBlockAlerts !== false && !(cfg.autoPipPromptOff || {})[hostKey()]) {
+            log("Browser auto-PiP held back for this site - will show the setup prompt on return");
+            state.pendingSetupPrompt = true;
+          }
+        } else if (reason === "tabSwitch") {
           state.tabSwitchFailCount++;
           log(`Tab switch failure #${state.tabSwitchFailCount}: armed=${armed}, timeSinceInteraction=${Math.round(timeSinceInteraction/1000)}s`);
           if (state.tabSwitchFailCount === 1 && now() >= state.armedUntil) {
@@ -455,6 +466,28 @@
     state.bannerEl = el;
   }
 
+  // The browser decides per site whether it may pop a video out on its own, and extensions cannot change that setting.
+  // So: name the setting, and open this site's settings page on request.
+  function showSetupPrompt(cfg) {
+    hideBanner();
+    injectStylesOnce();
+    const host = hostKey();
+    const el = document.createElement("div");
+    el.className = "betterautopip-banner betterautopip-setup";
+    el.innerHTML = `<div class="betterautopip-banner-content"><div class="betterautopip-banner-icon">&#9432;</div><div class="betterautopip-banner-text"><strong>Automatic Picture-in-Picture is off for <span class="betterautopip-setup-host"></span></strong><p>Your browser only pops videos out by itself on sites you allow. Click <b>Allow for this site</b>, then set <b>Automatic picture-in-picture</b> to <b>Allow</b> on the page that opens.</p></div><div class="betterautopip-setup-actions"><button data-bap-action="open-settings">Allow for this site</button><button data-bap-action="never">Don't ask again</button></div><button class="betterautopip-banner-close" data-bap-action="close">&times;</button></div>`;
+    el.querySelector(".betterautopip-setup-host").textContent = host;
+    const on = (sel, fn) => el.querySelector(sel).addEventListener("click", (e) => { e.stopPropagation(); hideBanner(); if (isExtensionValid()) fn(); });
+    on('[data-bap-action="open-settings"]', () => chrome.runtime.sendMessage({ action: "openAutoPipSettings" }).catch(() => { }));
+    on('[data-bap-action="never"]', async () => {
+      const c = await loadConfig();
+      await chrome.storage.sync.set({ autoPipPromptOff: { ...(c.autoPipPromptOff || {}), [host]: true } });
+      log(`Setup prompt turned off for ${host}`);
+    });
+    on(".betterautopip-banner-close", () => { });
+    document.documentElement.appendChild(el);
+    state.bannerEl = el;
+  }
+
   function hideBanner() {
     if (!state.bannerEl) return;
     state.bannerEl.remove();
@@ -539,7 +572,7 @@
     const style = document.createElement("style");
     style.id = STYLES_ID;
     // Minified CSS
-    style.textContent = `.betterautopip-toast{position:fixed;z-index:2147483647;right:12px;bottom:12px;padding:10px 12px;border-radius:10px;font:13px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:rgba(30,30,30,.92);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:pointer;user-select:none;max-width:320px}.betterautopip-toast:hover{filter:brightness(1.05)}.betterautopip-banner{position:fixed;z-index:2147483646;top:0;left:0;right:0;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.15);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;animation:betterautopip-slide-down .3s ease-out}@keyframes betterautopip-slide-down{from{transform:translateY(-100%)}to{transform:translateY(0)}}.betterautopip-banner-content{display:flex;align-items:center;gap:12px;padding:14px 20px;max-width:1200px;margin:0 auto}.betterautopip-banner-icon{font-size:24px;line-height:1;flex-shrink:0}.betterautopip-banner-text{flex:1}.betterautopip-banner-text strong{display:block;font-size:15px;margin-bottom:4px}.betterautopip-banner-text p{margin:0;opacity:.95;font-size:13px}.betterautopip-banner-close{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:24px;line-height:1;width:32px;height:32px;border-radius:50%;cursor:pointer;flex-shrink:0;transition:background .2s}.betterautopip-banner-close:hover{background:rgba(255,255,255,.3)}.betterautopip-floating-toggle{position:fixed;z-index:2147483645;bottom:20px;left:20px;display:flex;align-items:center;gap:10px;padding:10px 16px;background:rgba(30,30,30,.95);backdrop-filter:blur(10px);border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,.3);font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#fff;cursor:pointer;user-select:none;transition:all .3s ease;opacity:.7;animation:betterautopip-float-in .4s ease-out}.betterautopip-floating-toggle:hover{opacity:1;transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.4)}.betterautopip-floating-toggle-icon{width:24px;height:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;position:relative}.betterautopip-floating-toggle-icon svg{width:100%;height:100%;display:block;color:#fff}.betterautopip-floating-toggle-icon::after{content:'';position:absolute;top:50%;left:-2px;right:-2px;height:2px;background:#ff4444;transform:translateY(-50%) rotate(-45deg);opacity:0;transition:opacity .2s}.betterautopip-floating-toggle.disabled .betterautopip-floating-toggle-icon::after{opacity:1}.betterautopip-floating-toggle-text{font-weight:500;white-space:nowrap}.betterautopip-floating-toggle-status{font-size:11px;opacity:.8;margin-left:4px}.betterautopip-floating-toggle.enabled{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%)}.betterautopip-floating-toggle.disabled{background:rgba(80,80,80,.95)}@keyframes betterautopip-float-in{from{opacity:0;transform:translateY(20px)}to{opacity:.7;transform:translateY(0)}}`;
+    style.textContent = `.betterautopip-toast{position:fixed;z-index:2147483647;right:12px;bottom:12px;padding:10px 12px;border-radius:10px;font:13px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:rgba(30,30,30,.92);color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:pointer;user-select:none;max-width:320px}.betterautopip-toast:hover{filter:brightness(1.05)}.betterautopip-banner{position:fixed;z-index:2147483646;top:0;left:0;right:0;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.15);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;animation:betterautopip-slide-down .3s ease-out}@keyframes betterautopip-slide-down{from{transform:translateY(-100%)}to{transform:translateY(0)}}.betterautopip-banner-content{display:flex;align-items:center;gap:12px;padding:14px 20px;max-width:1200px;margin:0 auto}.betterautopip-banner-icon{font-size:24px;line-height:1;flex-shrink:0}.betterautopip-banner-text{flex:1}.betterautopip-banner-text strong{display:block;font-size:15px;margin-bottom:4px}.betterautopip-banner-text p{margin:0;opacity:.95;font-size:13px}.betterautopip-banner-close{background:rgba(255,255,255,.2);border:none;color:#fff;font-size:24px;line-height:1;width:32px;height:32px;border-radius:50%;cursor:pointer;flex-shrink:0;transition:background .2s}.betterautopip-banner-close:hover{background:rgba(255,255,255,.3)}.betterautopip-setup-actions{display:flex;gap:8px;flex-shrink:0}.betterautopip-setup-actions button{background:#fff;color:#4b3c9a;border:none;border-radius:16px;padding:7px 14px;font:600 13px/1 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;cursor:pointer}.betterautopip-setup-actions button[data-bap-action=never]{background:rgba(255,255,255,.2);color:#fff}.betterautopip-floating-toggle{position:fixed;z-index:2147483645;bottom:20px;left:20px;display:flex;align-items:center;gap:10px;padding:10px 16px;background:rgba(30,30,30,.95);backdrop-filter:blur(10px);border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,.3);font:13px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#fff;cursor:pointer;user-select:none;transition:all .3s ease;opacity:.7;animation:betterautopip-float-in .4s ease-out}.betterautopip-floating-toggle:hover{opacity:1;transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.4)}.betterautopip-floating-toggle-icon{width:24px;height:24px;flex-shrink:0;display:flex;align-items:center;justify-content:center;position:relative}.betterautopip-floating-toggle-icon svg{width:100%;height:100%;display:block;color:#fff}.betterautopip-floating-toggle-icon::after{content:'';position:absolute;top:50%;left:-2px;right:-2px;height:2px;background:#ff4444;transform:translateY(-50%) rotate(-45deg);opacity:0;transition:opacity .2s}.betterautopip-floating-toggle.disabled .betterautopip-floating-toggle-icon::after{opacity:1}.betterautopip-floating-toggle-text{font-weight:500;white-space:nowrap}.betterautopip-floating-toggle-status{font-size:11px;opacity:.8;margin-left:4px}.betterautopip-floating-toggle.enabled{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%)}.betterautopip-floating-toggle.disabled{background:rgba(80,80,80,.95)}@keyframes betterautopip-float-in{from{opacity:0;transform:translateY(20px)}to{opacity:.7;transform:translateY(0)}}`;
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -654,6 +687,10 @@
     if (curr === "visible" && prev === "hidden") {
       log("Tab visible again");
       if (cfg.exitOnExpand) await maybeExitPiP(cfg);
+      if (state.pendingSetupPrompt) showSetupPrompt(cfg);
+      // Reset here, not on hide: the browser may call the PiP handler before this frame sees visibilitychange.
+      state.pendingSetupPrompt = false;
+      state.autoPiPCalledThisHide = false;
     }
     state.lastVisibilityState = curr;
     tick();

@@ -30,6 +30,10 @@ Not on the list? Open the extension's **Options**, enter the site under **Custom
 
 Prefer not to add sites one by one? Turn on **Allow on all sites** in Options. Your browser asks once for access to all websites, and you can turn it off at any time. With it on, automatic Picture-in-Picture works on every site, including videos inside embedded players (an iframe from another website).
 
+### Allowing automatic Picture-in-Picture for a site
+
+Your browser only pops a video out by itself on sites you watch often or have allowed, and extensions can't change that setting. If Better Auto PiP shows **"Automatic Picture-in-Picture is off for (site)"** when you come back to a tab, click **Allow for this site** and set **Automatic picture-in-picture** to **Allow** on the settings page that opens. You only need to do this once per site. Click **Don't ask again** to stop the message for that site. Until then, the **Trigger Picture-in-Picture** shortcut (Cmd+Shift+P / Ctrl+Shift+P by default) works at any time while a video is playing.
+
 ## Installation
 
 ### From Chrome Web Store
