@@ -175,14 +175,19 @@ const CUSTOM_PREFIX = 'bap-custom-';
 let customSyncChain = Promise.resolve();
 
 async function doSyncCustomSites() {
-  const { customSites } = await chrome.storage.sync.get({ customSites: [] });
+  const { customSites, allSites } = await chrome.storage.sync.get({ customSites: [], allSites: false });
   const wanted = new Map();
+  // "Allow on all sites": only when the switch is a real `true` AND the user granted *://*/*. Top frame only (allFrames:false): not inside every ad/embed iframe;
+  // embedded players are handled by the keyboard shortcut, which injects into all frames on demand.
+  if (allSites === true && (await chrome.permissions.contains({ origins: [BAPCustomSites.ALL_SITES_PATTERN] }))) {
+    wanted.set(BAPCustomSites.ALL_SITES_SCRIPT_ID, { id: BAPCustomSites.ALL_SITES_SCRIPT_ID, matches: [BAPCustomSites.ALL_SITES_PATTERN], js: ['content.js'], allFrames: false, runAt: 'document_idle', persistAcrossSessions: true });
+  }
   for (const host of BAPCustomSites.sanitizeList(customSites)) {
     const matches = BAPCustomSites.toMatchPatterns(host);
     if (!(await chrome.permissions.contains({ origins: matches }))) continue;      // never register without the user's grant
     wanted.set(CUSTOM_PREFIX + host, { id: CUSTOM_PREFIX + host, matches, js: ['content.js'], allFrames: true, runAt: 'document_idle', persistAcrossSessions: true });
   }
-  const existing = (await chrome.scripting.getRegisteredContentScripts()).filter((r) => r.id.startsWith(CUSTOM_PREFIX));
+  const existing = (await chrome.scripting.getRegisteredContentScripts()).filter((r) => r.id.startsWith(CUSTOM_PREFIX) || r.id === BAPCustomSites.ALL_SITES_SCRIPT_ID);
   const stale = existing.filter((r) => !wanted.has(r.id)).map((r) => r.id);
   if (stale.length) await chrome.scripting.unregisterContentScripts({ ids: stale });
   const have = new Set(existing.map((r) => r.id));
@@ -200,7 +205,7 @@ chrome.runtime.onInstalled.addListener(() => syncCustomSites());
 chrome.runtime.onStartup.addListener(() => syncCustomSites());
 chrome.permissions.onAdded.addListener(() => syncCustomSites());
 chrome.permissions.onRemoved.addListener(() => syncCustomSites());
-chrome.storage.onChanged.addListener((changes, area) => { if (area === 'sync' && changes.customSites) syncCustomSites(); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'sync' && (changes.customSites || changes.allSites)) syncCustomSites(); });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
   const tabId = sender.tab?.id;

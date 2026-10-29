@@ -9,7 +9,8 @@ const DEFAULTS = {
   tabSwitchDelay: 500,
   showFloatingButton: true,
   showBlockAlerts: true,
-  customSites: []
+  customSites: [],
+  allSites: false
 };
 
 const PIP_SITES = BAPCustomSites.BUILTIN_HOSTS;
@@ -145,6 +146,32 @@ async function removeSite(host) {
   await load();
 }
 
+async function allSitesGranted() {
+  try { return await chrome.permissions.contains({ origins: [BAPCustomSites.ALL_SITES_PATTERN] }); } catch { return false; }
+}
+
+async function setAllSites(on) {
+  const box = $("allSitesToggle"), err = $("allSitesError");
+  err.textContent = "";
+  if (on) {
+    let granted = false;
+    try {
+      // Needs a user gesture (this runs from the checkbox click). Shows the browser's own permission prompt.
+      granted = await chrome.permissions.request({ origins: [BAPCustomSites.ALL_SITES_PATTERN] });
+    } catch (e) {
+      box.checked = false;
+      err.textContent = "Couldn't ask for permission: " + (e && e.message ? e.message : e);
+      return;
+    }
+    if (!granted) { box.checked = false; err.textContent = "Access wasn't allowed, so all-sites mode was not turned on."; return; }
+    await chrome.storage.sync.set({ allSites: true });
+  } else {
+    await chrome.storage.sync.set({ allSites: false });
+    try { await chrome.permissions.remove({ origins: [BAPCustomSites.ALL_SITES_PATTERN] }); } catch { /* can't be removed if it came with the install */ }
+  }
+  await syncBackground();
+}
+
 async function load() {
   const cfg = await chrome.storage.sync.get(DEFAULTS);
   const isV = await isVivaldi();
@@ -162,6 +189,7 @@ async function load() {
   const ps = $("panelSection");
   if (ps) ps.style.display = isV ? "block" : "none";
 
+  $("allSitesToggle").checked = cfg.allSites === true && (await allSitesGranted());   // shows OFF if the permission was revoked elsewhere
   renderCustomSites(cfg.customSites);
   renderSites(cfg, isV);
 }
@@ -218,6 +246,7 @@ document.addEventListener("input", (e) => {
   if (t.tagName === "INPUT" && (t.type === "number" || t.type === "text")) debouncedSave();
 });
 
+$("allSitesToggle").addEventListener("change", (e) => setAllSites(e.target.checked));
 $("addSiteButton").addEventListener("click", addSite);
 $("customSiteInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addSite(); } });
 

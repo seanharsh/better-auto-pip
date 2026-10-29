@@ -6,6 +6,8 @@
     "www.espn.com", "www.youtube.com", "www.hulu.com", "vimeo.com", "www.dailymotion.com", "www.crunchyroll.com"
   ];
   const MAX_CUSTOM_SITES = 100;
+  const ALL_SITES_PATTERN = "*://*/*";          // the single optional host permission behind the "Allow on all sites" switch
+  const ALL_SITES_SCRIPT_ID = "bap-all-sites";
   const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
   const isIPv4 = (h) => { const m = IPV4.exec(h); return !!m && m.slice(1).every((o) => +o <= 255); };
@@ -61,5 +63,5 @@
     return out.slice(0, MAX_CUSTOM_SITES);
   }
 
-  root.BAPCustomSites = { BUILTIN_HOSTS, MAX_CUSTOM_SITES, normalizeHost, toMatchPatterns, addCustomSite, removeCustomSite, sanitizeList };
+  root.BAPCustomSites = { BUILTIN_HOSTS, MAX_CUSTOM_SITES, ALL_SITES_PATTERN, ALL_SITES_SCRIPT_ID, normalizeHost, toMatchPatterns, addCustomSite, removeCustomSite, sanitizeList };
 })(typeof globalThis !== "undefined" ? globalThis : self);
