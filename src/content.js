@@ -11,8 +11,6 @@
 
   const DEFAULTS = {
     enabled: true,
-    collapseWidthPx: 8,
-    collapseHeightPx: 80,
     debounceMs: 250,
     armMinutes: 10,
     exitOnExpand: true,
@@ -25,20 +23,19 @@
 
   const state = {
     armedUntil: 0,
-    lastCollapsed: false,
     lastAttemptTs: 0,
-    debounceTimer: null,
     toastEl: null,
     bannerEl: null,
     floatingToggle: null,
     isInPiP: false,
     lastVisibilityState: document.visibilityState,
-    lastViewportKey: null,
     tabSwitchFailCount: 0,
     lastUserInteraction: 0,
     mediaSessionHandlerRegistered: false,
     autoPiPCalledThisHide: false,
     pendingSetupPrompt: false,
+    pendingPanelNotice: false,
+    panelNoticeShown: false,
     supportsAutoPiP: false,
     cachedVideos: null,
     cachedVideosTs: 0,
@@ -117,8 +114,8 @@
     }
     try {
       const cfg = await loadConfig();
-      if (!cfg.enabled || !isSiteEnabled(cfg, "tab")) {
-        log("MediaSession handler not registered: extension disabled or site not enabled for tab");
+      if (!cfg.enabled || !isSiteEnabled(cfg, pageContext())) {
+        log(`MediaSession handler not registered: extension disabled or site not enabled for ${pageContext()}`);
         return;
       }
 
@@ -127,7 +124,7 @@
         state.autoPiPCalledThisHide = true;
         state.pendingSetupPrompt = false; // the browser's auto-PiP is working; it may call us after our own attempt already failed
         const currentCfg = await loadConfig();
-        if (!currentCfg.enabled || !isSiteEnabled(currentCfg, "tab")) {
+        if (!currentCfg.enabled || !isSiteEnabled(currentCfg, pageContext())) {
           log("MediaSession PiP ignored: disabled");
           return;
         }
@@ -142,9 +139,9 @@
           return;
         }
 
-        const delay = Math.min(Math.max(+currentCfg.tabSwitchDelay || 0, 0), 4000);
+        const delay = Math.min(pipDelay(currentCfg), 4000);
         if (delay > 0) {
-          log(`MediaSession PiP: honoring tabSwitchDelay ${delay}ms`);
+          log(`MediaSession PiP: waiting ${delay}ms (${pageContext()} delay)`);
           await new Promise(r => setTimeout(r, delay));
           if (document.pictureInPictureElement) return;
         }
@@ -189,38 +186,6 @@
     state.cachedViewport = { w: Math.round(w), h: Math.round(h) };
     state.cachedViewportTs = t;
     return state.cachedViewport;
-  }
-
-  function isVivaldiPanel() {
-    try {
-      const { w, h } = getViewportSize();
-      if (window.name && window.name.startsWith('vivaldi-webpanel-')) {
-        log("Panel detected via window.name");
-        return true;
-      }
-      if (window.location.href.includes('vivaldi://webpanel') || window.location.href.includes('vivaldi-webpanel')) {
-        log("Panel detected via URL");
-        return true;
-      }
-      const screenW = window.screen.width;
-      const isPanel = window === window.top && window.opener === null && w < (screenW * 0.6) && (h / w) > 1.2;
-      if (isPanel) {
-        log(`Panel detected via heuristic: w=${w}, screenW=${screenW}, h=${h}, aspect=${(h/w).toFixed(2)}`);
-      }
-      return isPanel;
-    } catch (e) {
-      log("Panel detection error:", e?.message);
-      return false;
-    }
-  }
-
-  function isCollapsed(cfg) {
-    const { w, h } = getViewportSize();
-    const collapsed = (w > 0 && w <= cfg.collapseWidthPx) || (h > 0 && h <= cfg.collapseHeightPx);
-    if (collapsed) {
-      log(`Collapse detected: w=${w}, h=${h}, thresholds: w<=${cfg.collapseWidthPx}, h<=${cfg.collapseHeightPx}`);
-    }
-    return collapsed;
   }
 
   function visibleAreaScore(video) {
@@ -335,8 +300,8 @@
 
   async function tryEnterPiP(cfg, reason = "unknown") {
     // Without a fresh click in this frame the request can only fail; the top frame's mirror handles PiP instead (no banner here).
-    if (!IS_TOP && mirror.pc && reason === "tabSwitch" && !navigator.userActivation?.isActive) {
-      log("Tab switch: video is mirrored to the top frame, which handles PiP");
+    if (!IS_TOP && mirror.pc && (reason === "tabSwitch" || reason === "collapse") && !navigator.userActivation?.isActive) {
+      log(`${reason === "collapse" ? "Panel collapse" : "Tab switch"}: video is mirrored to the top frame, which handles PiP`);
       return;
     }
     const t = now();
@@ -394,10 +359,17 @@
               showInteractionBanner(cfg, "tab");
             }
           }
+        } else if (reason === "collapse") {
+          // The panel's page has no fresh click when Vivaldi hides it (the click was on Vivaldi's own panel button), so the request
+          // only works within a few seconds of using the panel. Say once, when the panel is opened again, how to pop it out instead.
+          if (cfg.showBlockAlerts !== false && !state.panelNoticeShown) {
+            log("Panel collapse PiP blocked - will explain the shortcut when the panel opens again");
+            state.pendingPanelNotice = true;
+          }
         } else {
           if (cfg.showBlockAlerts !== false) {
-            log("Panel/collapse PiP failure - showing notification banner");
-            showInteractionBanner(cfg, "panel");
+            log("PiP blocked - showing notification banner");
+            showInteractionBanner(cfg, "tab");
           }
         }
       }
@@ -461,8 +433,12 @@
     if (cfg.showBlockAlerts === false) return; // double-check
     const el = document.createElement("div");
     el.className = "betterautopip-banner";
-    const msg = triggerType === "tab" ? "Better Auto PiP needs page interaction to work when switching tabs." : "Better Auto PiP needs page interaction to work when panel collapses.";
-    el.innerHTML = `<div class="betterautopip-banner-content"><div class="betterautopip-banner-icon">&#9432;</div><div class="betterautopip-banner-text"><strong>Picture-in-Picture Blocked</strong><p>${msg} Click anywhere on this page, then try again.</p></div><button class="betterautopip-banner-close">&times;</button></div>`;
+    injectStylesOnce();
+    const key = /Mac/.test(navigator.platform) ? "\u2318\u21e7P" : "Ctrl+Shift+P";
+    const msg = triggerType === "tab"
+      ? "Better Auto PiP needs page interaction to work when switching tabs. Click anywhere on this page, then try again."
+      : `Vivaldi didn't let this video pop out when the panel closed. Your browser only allows it within a few seconds of a click or key press in the panel. Close the panel with Vivaldi's Panel shortcut while the panel has focus, click the panel right before closing it, or press the Trigger PiP shortcut (${key} by default).`;
+    el.innerHTML = `<div class="betterautopip-banner-content"><div class="betterautopip-banner-icon">&#9432;</div><div class="betterautopip-banner-text"><strong>Picture-in-Picture Blocked</strong><p>${msg}</p></div><button class="betterautopip-banner-close">&times;</button></div>`;
     el.querySelector(".betterautopip-banner-close").addEventListener("click", (e) => { e.stopPropagation(); hideBanner(); });
     const hideTimer = setTimeout(hideBanner, 8000);
     const interactionHandler = () => {
@@ -566,9 +542,7 @@
 
       await chrome.storage.sync.set({ siteSettings: nSettings });
 
-      if (cKey === 'enableTab') {
-        nEnabled ? registerMediaSessionHandler() : unregisterMediaSessionHandler();
-      }
+      nEnabled ? registerMediaSessionHandler() : unregisterMediaSessionHandler();
       el.style.transform = 'scale(1.1)';
       setTimeout(() => el.style.transform = '', 200);
     });
@@ -614,26 +588,13 @@
     return feature === 'tab' ? s.enableTab !== false : s.enablePanel !== false;
   }
 
-  async function tick() {
-    if (!isExtensionValid()) return;
-    if (!isVivaldi()) return;
-    const cfg = await loadConfig();
-    if (!cfg.enabled || !isSiteEnabled(cfg, 'panel')) return;
-    injectStylesOnce();
-    const collapsed = isCollapsed(cfg);
-    clearTimeout(state.debounceTimer);
-    state.debounceTimer = setTimeout(async () => {
-      if (!isExtensionValid()) return;
-      if (collapsed && !state.lastCollapsed) {
-        state.lastCollapsed = true;
-        await tryEnterPiP(cfg, "collapse");
-      }
-      if (!collapsed && state.lastCollapsed) {
-        state.lastCollapsed = false;
-        hideToast();
-        await maybeExitPiP(cfg);
-      }
-    }, cfg.debounceMs);
+  // "panel" in a Vivaldi web panel, "tab" everywhere else. Decides which per-site switch and which delay apply.
+  function pageContext() {
+    return cachedVivaldi?.isPanel ? "panel" : "tab";
+  }
+
+  function pipDelay(cfg) {
+    return Math.max(+(pageContext() === "panel" ? cfg.debounceMs : cfg.tabSwitchDelay) || 0, 0);
   }
 
   function trackUserInteraction() {
@@ -642,26 +603,12 @@
 
   function hookViewportEvents() {
     ['mousedown', 'keydown', 'touchstart', 'click'].forEach(e => document.addEventListener(e, trackUserInteraction, { passive: true, capture: true }));
-    if (isVivaldi()) {
-      window.visualViewport?.addEventListener("resize", tick, { passive: true });
-      window.addEventListener("resize", tick, { passive: true });
-      document.addEventListener("fullscreenchange", tick, { passive: true });
-      setInterval(async () => {
-        const { w, h } = getViewportSize();
-        const key = `${w}x${h}`;
-        if (state.lastViewportKey !== key) {
-          state.lastViewportKey = key;
-          tick();
-        }
-      }, 500);
-    }
     document.addEventListener("visibilitychange", handleVisibilityChange, { passive: true });
     document.addEventListener("enterpictureinpicture", async () => {
       state.isInPiP = true;
       try {
         const cfg = await loadConfig();
-        const hidden = document.visibilityState === "hidden";
-        const context = hidden ? "tab" : "panel";
+        const context = pageContext();
         const allowed = cfg.enabled && isSiteEnabled(cfg, context);
         if (!allowed) {
           log(`Auto-exiting PiP: extension disabled for ${context} on this site`);
@@ -680,32 +627,40 @@
     const prev = state.lastVisibilityState;
     log(`Visibility changed: ${prev} -> ${curr}`);
 
+    // A Vivaldi panel's page is hidden, not resized, when the panel closes (its size stays frozen), so hidden means collapsed there.
+    const context = pageContext();
+    const what = context === "panel" ? "Panel" : "Tab";
     if (curr === "hidden" && prev === "visible") {
-      if (isSiteEnabled(cfg, 'tab')) {
-        const d = cfg.tabSwitchDelay;
-        log(`Tab hidden, scheduling PiP attempt in ${d}ms (mediaSession: ${state.mediaSessionHandlerRegistered})`);
+      if (isSiteEnabled(cfg, context)) {
+        const d = pipDelay(cfg);
+        const reason = context === "panel" ? "collapse" : "tabSwitch";
+        log(`${what} hidden, scheduling PiP attempt in ${d}ms (mediaSession: ${state.mediaSessionHandlerRegistered})`);
         if (state.mediaSessionHandlerRegistered) {
           setTimeout(async () => {
-            if (!document.pictureInPictureElement && !state.isInPiP) await tryEnterPiP(cfg, "tabSwitch");
+            if (!document.pictureInPictureElement && !state.isInPiP) await tryEnterPiP(cfg, reason);
           }, d + 200);
         } else {
-          setTimeout(() => tryEnterPiP(cfg, "tabSwitch"), d);
+          setTimeout(() => tryEnterPiP(cfg, reason), d);
         }
       } else {
-        log("Tab hidden but site not enabled for tab switching");
+        log(`${what} hidden but site not enabled for ${context === "panel" ? "panel collapse" : "tab switching"}`);
       }
     }
     if (curr === "visible" && prev === "hidden") {
-      log("Tab visible again");
+      log(`${what} visible again`);
       const pipWasOpen = !!document.pictureInPictureElement || state.isInPiP;
       if (cfg.exitOnExpand) await maybeExitPiP(cfg);
       if (state.pendingSetupPrompt && !state.autoPiPCalledThisHide && !pipWasOpen) showSetupPrompt(cfg);
+      if (state.pendingPanelNotice) {
+        state.pendingPanelNotice = false;
+        state.panelNoticeShown = true;
+        showInteractionBanner(cfg, "panel");
+      }
       // Reset here, not on hide: the browser may call the PiP handler before this frame sees visibilitychange.
       state.pendingSetupPrompt = false;
       state.autoPiPCalledThisHide = false;
     }
     state.lastVisibilityState = curr;
-    tick();
   }
 
   // ---- Mirror: PiP for players inside cross-origin iframes ----
@@ -887,7 +842,6 @@
       if (added) {
         log("New video element detected in DOM");
         state.cachedVideosTs = 0;
-        setTimeout(tick, 500);
         setTimeout(registerMediaSessionHandler, 600);
       }
     });
@@ -908,7 +862,6 @@
     document.addEventListener("yt-navigate-finish", () => {
       log("YouTube navigation detected");
       state.cachedVideosTs = 0;
-      setTimeout(tick, 1000);
     }, { passive: true });
   }
 
@@ -921,11 +874,7 @@
     setupVideoObserver();
     setupMirrorSender();
     initYouTube();
-    tick();
-    tick();
     setTimeout(updateFloatingToggle, 2000);
-    setTimeout(tick, 2000);
-    setTimeout(tick, 2000);
     setTimeout(registerMediaSessionHandler, 1000);
   })();
 })();

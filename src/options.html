@@ -17,12 +17,6 @@
 
   <div class="grid">
     <label>
-      Debounce (ms)
-      <input type="number" id="debounceMs" min="0" max="2000" />
-      <div class="hint">Wait time before triggering to avoid false positives.</div>
-    </label>
-
-    <label>
       Arm duration (minutes)
       <input type="number" id="armMinutes" min="1" max="120" />
       <div class="hint">If PiP is blocked, click the in-page toast to "arm" Better Auto PiP temporarily.</div>
@@ -61,15 +55,9 @@
 
     <div class="grid">
       <label>
-        Collapse width threshold (px)
-        <input type="number" id="collapseWidthPx" min="1" max="200" />
-        <div class="hint">Trigger when viewport width is at or below this value (default: 8px).</div>
-      </label>
-
-      <label>
-        Collapse height threshold (px)
-        <input type="number" id="collapseHeightPx" min="1" max="400" />
-        <div class="hint">Optional trigger if height collapses instead of width (default: 80px).</div>
+        Panel collapse delay (ms)
+        <input type="number" id="debounceMs" min="0" max="2000" />
+        <div class="hint">Wait this long before triggering PiP after a web panel closes.</div>
       </label>
     </div>
   </div>

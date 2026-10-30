@@ -59,19 +59,21 @@ Your browser only pops a video out by itself on sites you watch often or have al
 Access settings by clicking the extension icon or right-clicking and selecting "Options":
 
 - Enable/disable the extension globally
-- Configure panel collapse detection (Vivaldi only)
+- Set the delay before PiP when a panel closes (Vivaldi only)
 - Adjust tab switch delay
 - Per-site enable/disable controls
 - Add or remove custom sites (each site is allowed separately; removing a site also revokes its access)
 - Allow on all sites (optional, off by default)
 
-## Vivaldi Panel Auto-PiP (Keyboard Shortcut Setup)
+## Vivaldi Panel Auto-PiP
 
-Because of a Chromium restriction, web panels cannot enter Picture-in-Picture automatically on collapse without a user gesture. The extension provides a keyboard command that bypasses this when paired with Vivaldi's panel toggle shortcut:
+Your browser only lets a page start Picture-in-Picture within a few seconds of a click or key press inside it. Clicking Vivaldi's panel button doesn't count, because that click goes to Vivaldi, not to the page in the panel. So whether the video pops out when you close a panel depends on how you close it:
 
-1. Open `chrome://extensions/shortcuts` and set a shortcut (default `Ctrl+Shift+P` / `Cmd+Shift+P`) for **Better Auto PiP → Trigger Picture-in-Picture**.
-2. In Vivaldi, open **Settings → Keyboard → View** and bind the **same** shortcut to **Toggle Web Panel**.
-3. Pressing the shortcut now collapses the panel *and* triggers PiP in a single keypress.
+- **With the keyboard (works every time):** close the panel with Vivaldi's **Panel** shortcut (**Settings → Keyboard → View → Panel**, `Cmd+Option+P` / `F4` by default) while the panel has focus. The key press counts as input in the panel, so the video pops out.
+- **With the mouse:** click anywhere in the panel, for example on the video, then close the panel within a few seconds.
+- **At any time:** press the **Trigger Picture-in-Picture** shortcut (`Cmd+Shift+P` / `Ctrl+Shift+P` by default, set in `chrome://extensions/shortcuts`). It finds the video in an open web panel even while a normal tab is in front. Don't give it the same key as Vivaldi's Panel shortcut: only one of them runs.
+
+If the video can't pop out when a panel closes, Better Auto PiP explains this once, the next time you open the panel.
 
 ## Notes on Chrome's Built-in Auto-PiP
 

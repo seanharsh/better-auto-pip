@@ -1,7 +1,5 @@
 const DEFAULTS = {
   enabled: true,
-  collapseWidthPx: 8,
-  collapseHeightPx: 80,
   debounceMs: 250,
   armMinutes: 10,
   exitOnExpand: true,
@@ -177,8 +175,6 @@ async function load() {
   const isV = await isVivaldi();
 
   $("enabled").checked = !!cfg.enabled;
-  $("collapseWidthPx").value = cfg.collapseWidthPx;
-  $("collapseHeightPx").value = cfg.collapseHeightPx;
   $("debounceMs").value = cfg.debounceMs;
   $("armMinutes").value = cfg.armMinutes;
   $("exitOnExpand").checked = !!cfg.exitOnExpand;
@@ -197,8 +193,6 @@ async function load() {
 const save = async () => {
   const cfg = {
     enabled: $("enabled").checked,
-    collapseWidthPx: +$("collapseWidthPx").value,
-    collapseHeightPx: +$("collapseHeightPx").value,
     debounceMs: +$("debounceMs").value,
     armMinutes: +$("armMinutes").value,
     exitOnExpand: $("exitOnExpand").checked,

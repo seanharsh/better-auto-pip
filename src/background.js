@@ -2,8 +2,6 @@ importScripts('customSites.js');   // BAPCustomSites: shared with the options pa
 
 const DEFAULTS = {
   enabled: true,
-  collapseWidthPx: 8,
-  collapseHeightPx: 80,
   debounceMs: 250,
   armMinutes: 10,
   exitOnExpand: false,
@@ -160,8 +158,25 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+// Vivaldi panel tabs seen so far. tabs.query can't list them, and the service worker may stop between uses, so keep them in session storage.
+async function getPanelTabs() {
+  try { return (await chrome.storage.session.get({ panelTabs: [] })).panelTabs; } catch { return []; }
+}
+async function setPanelTabs(ids) {
+  try { await chrome.storage.session.set({ panelTabs: ids }); } catch { }
+}
+async function rememberPanelTab(tabId) {
+  const ids = await getPanelTabs();
+  if (!ids.includes(tabId)) await setPanelTabs([...ids, tabId]);
+}
+async function forgetPanelTab(tabId) {
+  const ids = await getPanelTabs();
+  if (ids.includes(tabId)) await setPanelTabs(ids.filter((id) => id !== tabId));
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   log(`Tab ${tabId} removed, cleaning up`);
+  forgetPanelTab(tabId);
   INJECTED.delete(tabId);
   if (TIMERS[tabId]) {
     clearTimeout(TIMERS[tabId]);
@@ -268,30 +283,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendRespond) => {
       }
 
       try {
-        const winId = sender.tab.windowId;
-        const win = await chrome.windows.get(winId).catch(() => null);
-
-        let isPanel = false;
-        if (win && win.vivExtData) {
-          const dataStr = typeof win.vivExtData === 'string' ? win.vivExtData : null;
-          if (!dataStr || (dataStr.includes("SELECTED_PANEL") || dataStr.includes("SHOW_PANEL"))) {
-            try {
-              const data = dataStr ? JSON.parse(dataStr) : win.vivExtData;
-              const webPanelActive = (data.SELECTED_PANEL && data.SELECTED_PANEL.startsWith("WEBPANEL_")) || data.SHOW_PANEL;
-
-              if (webPanelActive) {
-                let t = sender.tab;
-                if (!t.width) t = await chrome.tabs.get(sender.tab.id);
-
-                if (t.width && win.width && (t.width / win.width < 0.7)) {
-                  isPanel = true;
-                }
-              }
-            } catch (e) {
-              log(`Error parsing vivExtData:`, e?.message);
-            }
-          }
-        }
+        // Vivaldi web panels are tabs the extension can message, but tabs.query never lists them (normal tabs, tab stacks and
+        // tiles all are). Neither window size nor the window's vivExtData can tell which page is the panel.
+        const isPanel = !!tabId && !(await chrome.tabs.query({})).some((t) => t.id === tabId);
+        if (isPanel) rememberPanelTab(tabId);
         log(`Responding to isVivaldi: isVivaldi=true, isPanel=${isPanel}`);
         sendRespond({ isVivaldi: true, isPanel });
       } catch (e) {
@@ -320,8 +315,8 @@ if (chrome.commands && chrome.commands.onCommand) {
       return;
     }
     log(`trigger-pip command on tab ${tabId}`);
-    chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
+    const run = (id) => chrome.scripting.executeScript({
+      target: { tabId: id, allFrames: true },
       func: () => {
         const videos = Array.from(document.querySelectorAll("video")).filter((v) => !v.hasAttribute("data-bap-mirror"));
         let best = null;
@@ -346,10 +341,19 @@ if (chrome.commands && chrome.commands.onCommand) {
           .catch((e) => ({ ok: false, reason: e?.name || "unknown", message: e?.message }));
       }
     }).then((results) => {
-      log("trigger-pip executeScript results:", JSON.stringify(results?.map(r => r.result)));
-    }).catch((e) => {
-      log("trigger-pip executeScript failed:", e?.message);
+      const r = results?.map(x => x.result) || [];
+      log(`trigger-pip results on tab ${id}:`, JSON.stringify(r));
+      return r;
     });
+    // The command comes with the active normal tab, never a panel. If that tab has no video, try the Vivaldi panels instead.
+    (async () => {
+      const found = (r) => r.some((x) => x?.reason !== "no-video");
+      if (found(await run(tabId).catch((e) => (log("trigger-pip failed:", e?.message), [])))) return;
+      for (const id of await getPanelTabs()) {
+        const r = await run(id).catch(() => { forgetPanelTab(id); return []; });
+        if (found(r)) return;
+      }
+    })();
   });
 }
 
