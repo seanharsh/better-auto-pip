@@ -88,7 +88,7 @@
         "default": "Ctrl+Shift+P",
         "mac": "Command+Shift+P"
       },
-      "description": "Trigger Picture-in-Picture on the active video (pair with Vivaldi's Toggle Panel shortcut for panel auto-PiP)"
+      "description": "Trigger Picture-in-Picture on the active video, or on an open Vivaldi web panel's video"
     }
   }
 }
